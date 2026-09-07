@@ -1,12 +1,14 @@
-/* Synchronous Zsh/libcurl binding. See README.md for the supported contract. */
+/* Zsh/libcurl binding. See README.md for the supported contract. */
 #define MODULE 1
 #include "zsh.mdh"
 #include "version.h"
 #include <curl/curl.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <poll.h>
+#include <time.h>
 
-#define ZCURL_VERSION "0.2.0-dev"
+#define ZCURL_VERSION "0.3.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -19,6 +21,9 @@ static int initialized, busy;
 static char *body, *headers, *error_text, *error_kind, *effective_url, *content_type;
 static zlong http_status, curl_code, new_connections, total_us;
 static zlong return_status, complete, received_bytes;
+static char *ws_handle, *ws_event, *ws_state, *ws_type, *ws_close_reason;
+static zlong ws_offset, ws_bytesleft, ws_more, ws_message_end;
+static zlong ws_queued_bytes, ws_queued_frames, ws_close_code;
 
 enum buffer_failure { BUFFER_OK, BUFFER_LIMIT, BUFFER_MEMORY };
 struct buffer {
@@ -110,6 +115,13 @@ clear_result(void)
     http_status = new_connections = total_us = received_bytes = complete = 0;
     return_status = 0;
     curl_code = -1; /* No transfer has been attempted. */
+    replace_text(&ws_handle, "", 0);
+    replace_text(&ws_event, "", 0);
+    replace_text(&ws_state, "", 0);
+    replace_text(&ws_type, "", 0);
+    replace_text(&ws_close_reason, "", 0);
+    ws_offset = ws_bytesleft = ws_more = ws_message_end = 0;
+    ws_queued_bytes = ws_queued_frames = ws_close_code = 0;
 }
 
 /* Arguments are metafied, even for a builtin. Data may contain embedded NUL. */
@@ -483,20 +495,27 @@ static const struct result_field result_fields[] = {
     {"code", 1, &curl_code}, {"new_connections", 1, &new_connections},
     {"total_us", 1, &total_us}, {"status", 1, &return_status},
     {"complete", 1, &complete}, {"bytes", 1, &received_bytes},
+    {"handle", 0, &ws_handle}, {"event", 0, &ws_event},
+    {"state", 0, &ws_state}, {"frame_type", 0, &ws_type},
+    {"offset", 1, &ws_offset}, {"bytesleft", 1, &ws_bytesleft},
+    {"more", 1, &ws_more}, {"message_end", 1, &ws_message_end},
+    {"queued_bytes", 1, &ws_queued_bytes}, {"queued_frames", 1, &ws_queued_frames},
+    {"close_code", 1, &ws_close_code}, {"close_reason", 0, &ws_close_reason},
 };
 
 static void
-publish_result(char *name)
+publish_result(char *name, int websocket)
 {
     char **values;
-    size_t i;
+    /* Preserve the original HTTP snapshot shape; WS extends those fields. */
+    size_t i, count = websocket ? ARRAY_SIZE(result_fields) : 13;
     /* A trap may have changed the destination during the transfer. */
     if (!result_parameter(name)) {
         set_error("result", "result array changed during the request; see zcurl_* parameters", 2);
         return;
     }
-    values = zalloc((2 * ARRAY_SIZE(result_fields) + 1) * sizeof(*values));
-    for (i = 0; i < ARRAY_SIZE(result_fields); ++i) {
+    values = zalloc((2 * count + 1) * sizeof(*values));
+    for (i = 0; i < count; ++i) {
         const struct result_field *f = &result_fields[i];
         char number[64];
         values[2 * i] = ztrdup(f->key);
@@ -526,12 +545,17 @@ help(void)
          "  -f, --fail                Return 22 for HTTP >=400; retain the response\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --                    End options\n"
-         "zcurl --reset               Close the session and clear results\n"
+         "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
+         "zcurl ws OP HANDLE [options] [URL]\n"
+         "  OP: open, send, recv, poll, close, drop, info\n"
+         "  See docs/websocket.md for options, events and connection lifecycle.\n"
          "Option values must be separate words; short options cannot be clustered.\n"
          "Results are in zcurl_* parameters, and optionally ARRAY. No body is printed.");
 }
+
+#include "websocket.c"
 
 static int
 bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
@@ -549,6 +573,10 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
     r.timeout = 10000;
     r.connect_timeout = 3000;
     r.max_body = BODY_LIMIT;
+    if (args[0] && (control = text_argument(args[0])) && !strcmp(control, "ws")) {
+        websocket_command(args + 1);
+        goto done;
+    }
     if (args[0] && !args[1] && (control = text_argument(args[0]))) {
         if (!strcmp(control, "--help")) {
             help();
@@ -560,13 +588,14 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
         }
         if (!strcmp(control, "--reset")) {
             close_session();
+            websocket_cleanup();
             goto done;
         }
     }
     if (parse_request(args, &r))
         perform_request(&r);
     if (r.result)
-        publish_result(r.result);
+        publish_result(r.result, 0);
     if (!strcmp(error_kind, "usage"))
         zwarnnam(name, "%s", error_text);
 done:
@@ -633,12 +662,14 @@ int finish_(UNUSED(Module m))
     size_t i;
     /* Never send TLS shutdown on a connection inherited from the parent. */
     if (getpid() == owner) {
+        websocket_cleanup();
         close_session();
         if (initialized)
             curl_global_cleanup();
     }
     session = NULL;
     pool = NULL;
+    websockets = NULL;
     initialized = busy = 0;
     for (i = 0; i < ARRAY_SIZE(result_fields); ++i) {
         if (!result_fields[i].integer) {

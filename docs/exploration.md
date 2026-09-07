@@ -1,8 +1,10 @@
 # Where to push next
 
-Updated for 0.2.0-dev. The synchronous implementation now uses libcurl's multi
-interface to process Zsh's queued signals between network steps. It still
-exposes only one request at a time; concurrent/background APIs are not implemented.
+Updated for 0.3.0-dev. Persistent WS/WSS handles now have queued sends and
+explicit incremental receive/poll operations; see [the contract](websocket.md).
+The synchronous HTTP implementation uses libcurl's multi interface to process
+Zsh's queued signals between network steps. HTTP still exposes only one request
+at a time; concurrent HTTP/background APIs are not implemented.
 
 The working path is `Zsh builtin → libcurl → TLS backend → network`. The C
 module is the binding. A separate executable is an architectural option,

@@ -1,4 +1,4 @@
-# Validation of 0.2.0-dev
+# Validation of 0.3.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.7. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -45,6 +45,42 @@ No public endpoints, account credentials or system certificate changes are used.
 The synchronous multi driver queues Zsh signals around libcurl calls and
 delivers them between calls. Tests establish these specific behaviors, not
 every resolver, signal trap, job-control combination, or backend behavior.
+
+## WebSocket coverage
+
+`make test` and `make memcheck` also run a Python standard-library RFC 6455
+fixture, independently encoding and checking wire frames. The 0.3.0-dev run
+passed both targets and a C syntax check with `-Wall -Wextra -Werror`. The
+memory-check output is recorded locally in `build/websocket-valgrind.log`.
+
+- WS and verified WSS handles coexist with persistent HTTP requests; explicit
+  handshake authentication headers, untrusted and mismatched TLS certificates,
+  rejected upgrades, scheme restrictions and handshake deadlines.
+- All 256 byte values, NUL/trailing newlines, empty frames, and a 4 MB frame
+  round-trip through incremental receive and partial queued sends. The fixture
+  delays reads to exercise sender backpressure and checks client masking.
+- Text fragmented across UTF-8 character boundaries, interleaved PING/PONG,
+  explicit unsolicited PONG, and automatically queued matching PONG payloads.
+- One-byte receive chunks and offsets from a frame whose payload arrives in
+  two network writes; frame/message completion metadata.
+- Transactional queue rejection and retry, invalid fragment type rejection,
+  256 empty-frame queue limit, duplicate names and the 32-handle limit.
+- Local/peer close handshakes, close reasons, empty peer close, abrupt EOF,
+  malformed UTF-8/close payloads, receive message bounds, retained terminal
+  diagnoses, reset/unload cleanup, and snapshots/dynamic-scope destinations.
+- A fork inheriting the module is rejected while the parent connection remains
+  usable. PTY tests exercise Ctrl-C during WS poll and handshake, reentrant
+  calls, unload attempts, and a signal trap replacing a result destination.
+
+The stalled-upgrade fixture exposed a connect-only handshake that outlasted
+`CURLOPT_TIMEOUT_MS` on this libcurl build. The module therefore enforces a
+monotonic handshake deadline in addition to libcurl's configured timeouts.
+Backend blocking caveats remain; this is not a hard real-time guarantee.
+
+The WS build minimum is now libcurl 8.16.0; this environment's 8.21.0 is the
+only version validated here. Proxy/subprotocol policy, other TLS backends,
+platforms and libcurl versions, ZLE integration, and the Blade application
+protocol still require integration testing. See [the API contract](websocket.md).
 
 ## Memory checks and dependency findings
 

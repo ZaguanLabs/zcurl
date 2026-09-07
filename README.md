@@ -1,20 +1,23 @@
 # zcurl
 
-A native Zsh module for persistent HTTP/HTTPS requests through libcurl.
+A native Zsh module for persistent HTTP/HTTPS requests and WS/WSS connections
+through libcurl.
 `zcurl` is a builtin, so request data and response bytes stay in the shell
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.2.0-dev** is intended for trying in a project: methods, request
+Version **0.3.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
-Transfers are synchronous; there is no background/concurrent request API yet.
+HTTP transfers are synchronous. Persistent WebSocket handles provide queued sends
+and incremental receive through explicit bounded polling. There is no autonomous
+background worker or concurrent HTTP request API.
 
 ## Build and load
 
 Tested with Zsh 5.9.2 on Mageia x86_64, libcurl 8.21.0, and OpenSSL 3.5.7.
-Requirements: C compiler, make, pkg-config, libcurl development files >=7.85.0,
-and matching configured Zsh headers. Tests additionally use Python 3, openssl,
+Requirements: C compiler, make, pkg-config, libcurl development files >=8.16.0
+(with WS/WSS enabled), and matching configured Zsh headers. Tests additionally use Python 3, openssl,
 curl, and optional Valgrind.
 
 ```zsh
@@ -98,6 +101,25 @@ keep secret-bearing calls out of diagnostic traces.
 See [examples/api-client.zsh](examples/api-client.zsh) for a runnable helper
 that writes into its caller's result array through Zsh's dynamic scope.
 
+## Persistent WebSockets
+
+```zsh
+typeset -A event
+zcurl ws open blade --result event -- "$blade_url"
+zcurl ws send blade --data "$request_json"
+zcurl ws poll blade --result event --timeout 100
+# Inspect event[event], event[body], and event[message_end].
+# Continue polling to send queued frames and receive further chunks.
+zcurl ws close blade --code 1000
+# Poll until closed, with an application deadline; then release the handle.
+zcurl ws drop blade
+```
+
+See the [WebSocket contract](docs/websocket.md) for all operations, fragmentation,
+backpressure, ping/pong, result fields and close/error lifecycle. Each handle
+belongs to the shell that loaded the module. An inherited forked worker cannot
+use it; a worker must exec a fresh Zsh process and load its own module.
+
 ## Options
 
 ```text
@@ -120,7 +142,7 @@ zcurl --reset
 | `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |
 | `--max-body BYTES` | Response body limit, 1..67108864; default 8388608 (8 MiB) |
 | `--` | End of options |
-| `--reset` | Close the connection pool and clear the last result |
+| `--reset` | Close HTTP and all WebSocket handles and clear the last result |
 
 Option values must be separate shell words. Short-option clustering and
 `--option=value` are not supported. Only `--header` can be repeated. Options
@@ -133,7 +155,8 @@ in libcurl. Semicolon syntax for empty headers is not implemented.
 
 `--head` and `--request HEAD` use libcurl's HEAD behavior, not just a changed
 method string. HEAD cannot be combined with data or a different method.
-Only HTTP/HTTPS are permitted; a URL without a scheme defaults to HTTPS.
+For ordinary HTTP requests, only HTTP/HTTPS are permitted; a URL without a
+scheme defaults to HTTPS.
 Redirects are returned to the caller and are not followed. There is no
 insecure TLS option.
 
@@ -192,6 +215,9 @@ into a pipe or file for a binary consumer.
 
 ## Session and execution model
 
+The following describes synchronous HTTP. WebSocket scheduling and lifecycle
+are documented in the [WebSocket contract](docs/websocket.md#scheduling-and-ownership).
+
 The module owns one persistent easy handle and multi handle. A synchronous
 request is driven with `curl_multi_perform` and `curl_multi_poll`; poll waits
 are capped at 100 ms and libcurl can shorten them for its own timers. Zsh
@@ -200,8 +226,8 @@ between network steps. This avoids running shell traps inside libcurl calls.
 Some libcurl backends can still block, including synchronous DNS resolvers;
 100 ms is a poll bound, not a universal cancellation guarantee.
 
-Call `zcurl` directly, then read its parameters. `$(zcurl ...)`, background
-calls, and children inheriting the loaded module are deliberately rejected.
+For both HTTP and WebSockets, call `zcurl` directly, then read its parameters.
+`$(zcurl ...)`, background calls, and children inheriting the loaded module are deliberately rejected.
 A fork duplicates handles and socket descriptors; it does not create an
 independent TLS session. Start a fresh Zsh process to own a separate module.
 Normal fork/pipeline composition, autonomous background work and concurrency
@@ -230,5 +256,5 @@ of tiny loopback requests, not predictions for real API latency. Use
 `make benchmark` to measure this revision on your machine.
 
 [Exploration notes](docs/exploration.md) cover the architectural options.
-Next: project feedback on the API, file/descriptor streaming, named sessions,
-and explicit submit/poll/wait/collect operations for concurrent transfers.
+Next: Blade client integration feedback on the WebSocket API, file/descriptor
+streaming, named HTTP sessions, and explicit submit/poll/wait/collect operations for concurrent transfers.

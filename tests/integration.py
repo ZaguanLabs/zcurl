@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import websocket_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,6 +30,13 @@ class Server(http.server.ThreadingHTTPServer):
         self.slow_started = threading.Event()
         self.request_count = 0
         self.request_lock = threading.Lock()
+        self.ws_frames = []
+        self.ws_errors = []
+
+    def handle_error(self, request, client_address):
+        import traceback
+        self.ws_errors.append(traceback.format_exc())
+        super().handle_error(request, client_address)
 
     def get_request(self):
         sock, address = super().get_request()
@@ -53,6 +61,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         with self.server.request_lock:
             self.server.request_count += 1
+        if self.path.startswith('/ws'):
+            websocket_fixture.serve(self)
+            return
         request_body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if self.path == "/slow":
             self.server.slow_started.set()
@@ -268,6 +279,30 @@ def interrupt_test(env, plain):
         wait_for(b"\r\nUNLOAD:1\r\n")
         wait_for(b"\r\nOUTER:0:1\r\n")
         print("PASS: PTY signal traps cannot reenter/unload an active module or overwrite a changed result target")
+        os.write(fd, b'unfunction TRAPUSR1; unset response; typeset -A response; zcurl ws open active -- "${ZCURL_TEST_HTTP/http:/ws:}/ws"; print -r -- WS_READY\n')
+        wait_for(b"\r\nWS_READY\r\n")
+        os.write(fd, b'TRAPUSR1() { zcurl ws drop active; print -r -- "WS_REENTRY:$?"; zmodload -u zcurl; print -r -- "WS_UNLOAD:$?"; unset response; typeset -g response=changed; }; print -r -- WS_TRAP_READY\n')
+        wait_for(b"\r\nWS_TRAP_READY\r\n")
+        os.write(fd, b'print -r -- WS_POLL_BEGIN; zcurl ws poll active -r response --timeout 1000; print -r -- "WS_MUTATION:$?:$zcurl_error_kind:$response:$zcurl_state"\n')
+        wait_for(b"\r\nWS_POLL_BEGIN\r\n")
+        os.kill(pid, signal.SIGUSR1)
+        wait_for(b"\r\nWS_REENTRY:2\r\n")
+        wait_for(b"\r\nWS_UNLOAD:1\r\n")
+        wait_for(b"\r\nWS_MUTATION:2:result:changed:open\r\n")
+        os.write(fd, b'unfunction TRAPUSR1; print -r -- WS_INTERRUPT_BEGIN; zcurl ws poll active --timeout 1000\n')
+        wait_for(b"\r\nWS_INTERRUPT_BEGIN\r\n")
+        start = time.monotonic()
+        os.write(fd, b'\x03')
+        os.write(fd, b'zcurl ws send active --data recovered; repeat 20; do zcurl ws poll active --timeout 100; [[ $zcurl_event == data ]] && break; done; print -r -- "WS_RECOVERED:$zcurl_body:$zcurl_state"\n')
+        wait_for(b"\r\nWS_RECOVERED:recovered:open\r\n", timeout=2)
+        assert time.monotonic() - start < 1.5, 'WebSocket poll cancellation was delayed'
+        plain.slow_started.clear()
+        os.write(fd, b'zcurl ws open hanging -- "${ZCURL_TEST_HTTP/http:/ws:}/ws-hang"\n')
+        assert plain.slow_started.wait(4), 'WebSocket handshake never started'
+        os.write(fd, b'\x03')
+        os.write(fd, b'zcurl ws info active; print -r -- "WS_HANDSHAKE_RECOVERED:$?:$zcurl_state"; zcurl --reset\n')
+        wait_for(b"\r\nWS_HANDSHAKE_RECOVERED:0:open\r\n", timeout=2)
+        print('PASS: PTY WebSocket poll/handshake cancellation, reentry/unload guards, result mutation and connection recovery')
     finally:
         os.close(fd)
         try:
@@ -334,6 +369,12 @@ if __name__ == "__main__":
         integration(env, plain, tls, temp)
         api_test(env, plain, temp)
         loader_test(env)
+        ws_result = run(env, (ROOT / 'tests' / 'websocket.zsh').read_text())
+        assert ws_result.startswith('PASS: WS/WSS'), 'WebSocket script ended before completing its assertions'
+        print(ws_result)
+        assert not plain.ws_errors and not tls.ws_errors, (plain.ws_errors, tls.ws_errors)
+        assert any(op == 10 and data == b'heartbeat\0' for _, op, _, data in plain.ws_frames), 'automatic pong missing'
+        assert any(op == 10 and data == b'unsolicited' for _, op, _, data in tls.ws_frames), 'explicit pong missing'
         interrupt_test(env, plain)
         if args.benchmark:
             benchmark(env, tls, args.count)

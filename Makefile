@@ -9,8 +9,8 @@ all: build/zcurl.so
 
 ZSH_HEADERS := $(wildcard $(ZSH_SRC)/config.h $(ZSH_SRC)/Src/*.h $(ZSH_SRC)/Src/*.mdh $(ZSH_SRC)/Src/*.epro)
 
-build/zcurl.so: src/zcurl.c $(ZSH_HEADERS) Makefile
-	@pkg-config --atleast-version=7.85.0 libcurl || { echo 'libcurl development files >=7.85.0 are required.'; exit 1; }
+build/zcurl.so: src/zcurl.c src/websocket.c $(ZSH_HEADERS) Makefile
+	@pkg-config --atleast-version=8.16.0 libcurl || { echo 'libcurl development files >=8.16.0 are required.'; exit 1; }
 	@test -f "$(ZSH_SRC)/Src/zsh.mdh" || { echo 'Prepare Zsh headers first; see README.md.'; exit 1; }
 	mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -fPIC -shared \
