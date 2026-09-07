@@ -1,0 +1,5 @@
+# Atlas Scout local data
+.atlas/
+.deps/
+build/
+__pycache__/

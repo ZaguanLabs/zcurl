@@ -1,0 +1,234 @@
+# zcurl
+
+A native Zsh module for persistent HTTP/HTTPS requests through libcurl.
+`zcurl` is a builtin, so request data and response bytes stay in the shell
+without spawning a curl process for every call. TLS certificate and hostname
+verification remain enabled.
+
+Version **0.2.0-dev** is intended for trying in a project: methods, request
+bodies, repeated headers, caller-owned results, bounded responses, and
+interruptible requests are implemented. The API is still experimental.
+Transfers are synchronous; there is no background/concurrent request API yet.
+
+## Build and load
+
+Tested with Zsh 5.9.2 on Mageia x86_64, libcurl 8.21.0, and OpenSSL 3.5.7.
+Requirements: C compiler, make, pkg-config, libcurl development files >=7.85.0,
+and matching configured Zsh headers. Tests additionally use Python 3, openssl,
+curl, and optional Valgrind.
+
+```zsh
+# From this checkout:
+zsh scripts/prepare-zsh.zsh
+make
+make test
+source "$PWD/zcurl.zsh"
+zcurl --version
+```
+
+The preparation script downloads pinned upstream Zsh 5.9.2 source, configures
+it and generates headers under `.deps/`. It needs curl, tar/xz, sha256sum, and
+Zsh's configure tools. It does not install or replace your shell. It can be
+rerun to finish interrupted header generation; failures identify the log file.
+The archive checksum was recorded from the upstream HTTPS download; independent
+signature verification has not been performed.
+
+Use another configured, matching source tree with
+`make ZSH_SRC=/absolute/path/to/zsh-source`. The module checks its build's Zsh
+version on load. That check does **not** guarantee ABI compatibility across
+build options, distribution patches, or operating systems.
+
+In a project, source `/absolute/path/to/zcurl/zcurl.zsh`. The loader works
+regardless of the current directory, is idempotent, and restores `module_path`.
+It leaves an already-loaded `zcurl` module and its results alone. No startup
+file installation or persistent shell configuration is needed.
+
+After rebuilding, unload and reload the module in the shell where you are
+trying it. Existing loaded code does not change just because the file changed:
+
+```zsh
+zmodload -u zcurl
+source /absolute/path/to/zcurl/zcurl.zsh
+```
+
+The build replaces the `.so` atomically instead of overwriting a mapped file.
+
+## Make API requests
+
+Declare an associative array, then pass its name with `--result`:
+
+```zsh
+typeset -A response
+if zcurl --result response --fail \
+    --header 'Accept: application/json' \
+    -- https://api.example.com/items; then
+    print -r -- "HTTP $response[http_status], $response[bytes] bytes"
+    # Parse response[body] as data, or write exact bytes to a file:
+    print -rn -- "$response[body]" > response.json
+else
+    print -ru2 -- "${zcurl_error_kind}: ${(V)zcurl_error}"
+fi
+```
+
+POST a JSON body; `--data` implies POST unless a method is specified:
+
+```zsh
+zcurl --result response --fail \
+    --header 'Content-Type: application/json' \
+    --header "Authorization: Bearer $api_token" \
+    --data '{"name":"example"}' \
+    -- https://api.example.com/items
+
+# Other methods:
+zcurl --result response --request PATCH --data "$payload" -- "$url"
+zcurl --result response --request DELETE -- "$url"
+zcurl --result response --head -- "$url"
+```
+
+Each call resets request options, including method, body, headers and CA file,
+while retaining the connection pool. Supply authentication headers on each
+request. No cookie engine is enabled. curl's CLI config files are not read;
+libcurl's proxy environment settings still apply.
+
+`--data` sends literal bytes, including NUL and trailing newlines. It does not
+read `@filename`, URL-encode data, or infer JSON content types. Add the
+appropriate `Content-Type` header. Zsh xtrace/history can expose credentials;
+keep secret-bearing calls out of diagnostic traces.
+
+See [examples/api-client.zsh](examples/api-client.zsh) for a runnable helper
+that writes into its caller's result array through Zsh's dynamic scope.
+
+## Options
+
+```text
+zcurl [options] URL
+zcurl --help
+zcurl --version
+zcurl --reset
+```
+
+| Option | Meaning |
+| --- | --- |
+| `-r`, `--result ARRAY` | Replace a declared writable ordinary associative array |
+| `-X`, `--request METHOD` | HTTP method; default GET, or POST with data |
+| `-I`, `--head` | HEAD semantics, with no response body |
+| `-H`, `--header FIELD` | One request header; may be repeated |
+| `-d`, `--data BYTES` | Literal request body |
+| `-f`, `--fail` | Return status 22 for HTTP >=400, retaining the body |
+| `-c`, `--cacert FILE` | PEM trust file, with hostname verification still enabled |
+| `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
+| `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |
+| `--max-body BYTES` | Response body limit, 1..67108864; default 8388608 (8 MiB) |
+| `--` | End of options |
+| `--reset` | Close the connection pool and clear the last result |
+
+Option values must be separate shell words. Short-option clustering and
+`--option=value` are not supported. Only `--header` can be repeated. Options
+may appear before or after the single URL until `--`.
+
+Header names and methods must be HTTP tokens; header values may not contain
+CR, LF, NUL or other controls except tab. Combined request headers are capped
+at 256 KiB. A header like `Accept:` suppresses libcurl's default header, as
+in libcurl. Semicolon syntax for empty headers is not implemented.
+
+`--head` and `--request HEAD` use libcurl's HEAD behavior, not just a changed
+method string. HEAD cannot be combined with data or a different method.
+Only HTTP/HTTPS are permitted; a URL without a scheme defaults to HTTPS.
+Redirects are returned to the caller and are not followed. There is no
+insecure TLS option.
+
+## Results and errors
+
+No response body is printed automatically. Each field below is available as a
+read-only module parameter named `zcurl_FIELD`. With `--result response`, the
+same value is copied into `response[FIELD]`; that snapshot survives subsequent
+requests and module unload.
+
+| Field | Meaning |
+| --- | --- |
+| `body` | Raw response bytes, preserving NUL and trailing newlines |
+| `headers` | Raw headers, preserving CRLF, duplicates, interim blocks and trailers |
+| `http_status` | HTTP status; zero if none was received |
+| `code` | libcurl result; zero on transfer success; -1 if no transfer was attempted |
+| `status` | zcurl's shell return status |
+| `error_kind` | `none`, `usage`, `transport`, `http`, `body-limit`, `header-limit`, `memory`, or `result` |
+| `error` | Diagnostic text; empty on success |
+| `complete` | 1 if the transfer completed successfully, even for an HTTP error response |
+| `bytes` | Raw body bytes stored, rather than character count |
+| `effective_url` | URL reported by libcurl |
+| `content_type` | Content type reported by libcurl, or empty |
+| `new_connections` | Newly opened connections during the transfer |
+| `total_us` | libcurl's total transfer time in microseconds |
+
+Without `--fail`, a completed HTTP 404 returns zero. With `--fail`, it returns
+22, with `code=0`, `http_status=404`, `complete=1`, and the response body intact.
+A timeout returns 28, with `code=28` and `complete=0`. Body/header callback
+limits return 23 with a specific `error_kind`. Native usage/result-publication
+errors return 2. The shell may apply its own signal termination semantics.
+
+Normal invocations clear the global result first, including invalid calls and
+`--help`, `--version`, and `--reset`. Once a valid `--result ARRAY` option has
+been parsed, subsequent validation errors are also written there. If parsing
+fails before that option, the array is untouched; use the global error fields.
+Place `--result` first when building a wrapper, and always check exit status.
+Inherited-child and reentrant calls are rejected without replacing the active
+owner's result.
+
+Results require an existing ordinary writable associative array (`typeset -A`
+at top level, `local -A` in a function). Scalars, readonly/special/tied arrays,
+case-converting arrays, and subscript expressions are rejected before HTTP.
+The destination is checked again after the transfer, because a signal trap
+can change it. If publication then fails, the global result remains available
+with `error_kind=result`. Array assignment replaces all existing keys.
+
+Failed transfers can retain **partial** bodies and headers. The body limit
+applies to raw stored bytes, not total process memory: Zsh's internal encoding,
+publication copies, and a caller-owned snapshot use additional space. Received
+headers are bounded at 256 KiB, with libcurl's own limits also applying.
+
+Response data must never be `eval`ed or sourced. NUL survives inside a Zsh
+scalar but cannot be passed in an external program's argv; use `print -rn`
+into a pipe or file for a binary consumer.
+
+## Session and execution model
+
+The module owns one persistent easy handle and multi handle. A synchronous
+request is driven with `curl_multi_perform` and `curl_multi_poll`; poll waits
+are capped at 100 ms and libcurl can shorten them for its own timers. Zsh
+signals are queued during libcurl calls and result publication, then processed
+between network steps. This avoids running shell traps inside libcurl calls.
+Some libcurl backends can still block, including synchronous DNS resolvers;
+100 ms is a poll bound, not a universal cancellation guarantee.
+
+Call `zcurl` directly, then read its parameters. `$(zcurl ...)`, background
+calls, and children inheriting the loaded module are deliberately rejected.
+A fork duplicates handles and socket descriptors; it does not create an
+independent TLS session. Start a fresh Zsh process to own a separate module.
+Normal fork/pipeline composition, autonomous background work and concurrency
+remain future work. Do not call this synchronous builtin from a prompt/ZLE
+callback when you need uninterrupted typing.
+
+## Validation and next steps
+
+```zsh
+make test        # HTTP/TLS fixtures, API/scoping tests, project loader, PTY signals
+make memcheck    # Valgrind on scripted tests; requires Valgrind
+make benchmark   # local HTTPS comparison with external curl
+```
+
+Tests use temporary local certificates and loopback servers, with proxies
+removed from their environment. No public service or system trust-store
+changes are needed. The memory check uses two exact dependency-constructor
+suppressions reproduced independently of zcurl; see
+[validation notes](docs/validation.md).
+
+The original prototype's 100-request local HTTPS benchmark measured 15.63 ms
+for the module, 576.91 ms for separate curl processes, and 19.59 ms for one
+curl process given all URLs (medians of three rounds). Persistent cases used
+one connection; separate processes used 100. Those are historical measurements
+of tiny loopback requests, not predictions for real API latency. Use
+`make benchmark` to measure this revision on your machine.
+
+[Exploration notes](docs/exploration.md) cover the architectural options.
+Next: project feedback on the API, file/descriptor streaming, named sessions,
+and explicit submit/poll/wait/collect operations for concurrent transfers.

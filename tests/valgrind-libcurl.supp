@@ -1,0 +1,37 @@
+# Two dependency-constructor leaks reproduced by tests/libcurl-load.c without
+# Zsh, zcurl, curl_global_init, or any requests. See docs/validation.md.
+# Exact Mageia library versions/stacks; never suppress module allocations.
+{
+   mageia-libssh-constructor-gpg-error
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   obj:/usr/lib64/libgpg-error.so.0.41.1
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libssh.so.4.10.4
+   obj:/usr/lib64/libssh.so.4.10.4
+   fun:call_init.part.0
+   fun:_dl_init
+   fun:_dl_catch_exception
+   fun:dl_open_worker
+   fun:_dl_catch_exception
+   fun:_dl_open
+}
+{
+   mageia-libssh-constructor-gcrypt
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libgcrypt.so.20.6.1
+   obj:/usr/lib64/libssh.so.4.10.4
+   obj:/usr/lib64/libssh.so.4.10.4
+   fun:call_init.part.0
+   fun:_dl_init
+   fun:_dl_catch_exception
+   fun:dl_open_worker
+}
