@@ -1,4 +1,4 @@
-# Validation of 0.6.0-dev
+# Validation of 0.7.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -45,6 +45,31 @@ No public endpoints, account credentials or system certificate changes are used.
 The synchronous multi driver queues Zsh signals around libcurl calls and
 delivers them between calls. Tests establish these specific behaviors, not
 every resolver, signal trap, job-control combination, or backend behavior.
+
+## Header-lookup coverage
+
+`zcurl headers` is tested with actual HTTP responses and synthetic libcurl-style
+callback transcripts. Coverage includes:
+
+- Case-insensitive lookup, repeated `Set-Cookie`, identical duplicates, empty
+  values and missing fields, with stable order and no comma splitting.
+- Informational, proxy CONNECT and authentication blocks; HTTP/2 and HTTP/3
+  status-line forms; 101 upgrades; separate chunked-trailer lookup.
+- CRLF and LF lines, outer whitespace, legacy folding (including empty folds),
+  bytes above ASCII, and literal shell-looking values.
+- Synchronous and saved concurrent snapshots, lookup while a completed job is
+  retained, and preservation of transfer metadata and errors on both success
+  and failure. Arrays remain available after unload.
+- Partial header sections consisting of complete lines; malformed status/field
+  lines, orphan folds, NUL/control bytes and unterminated lines; the inclusive
+  256 KiB input boundary and rejection above it without partial publication.
+- Indexed-array validation, rejecting subscripts, absent/scalar/associative,
+  special, readonly, converting and unique targets. Dynamic scope works under
+  adverse caller options, including `KSH_ARRAYS`.
+
+The lookup does not establish transfer completeness or interpret field-specific
+semantics. HTTP/2/3 parsing fixtures validate their rendered status-line forms,
+not network negotiation of those protocols. See [the contract](headers.md).
 
 ## File-output coverage
 

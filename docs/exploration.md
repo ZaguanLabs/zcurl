@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.6.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.7.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -51,8 +51,10 @@ requests turn out to be the main need.
 
 1. **Result API.** Caller-owned associative snapshots are implemented and tested
    through dynamic scope. Readonly/special/converting targets are rejected.
-   Raw response headers preserve duplicates, informational blocks and trailers;
-   a convenient structured header-access API remains to be designed.
+   Raw response headers preserve duplicates, informational blocks and trailers.
+   [Header lookup](headers.md) now extracts individual values from saved
+   snapshots, with duplicate preservation and separate trailer selection.
+   Field-specific interpretation remains the consuming application's task.
 2. **Streaming.** HTTP requests and responses can now stream through caller-opened
    regular-file descriptors without accumulating scalar bodies; see
    [file uploads](file-input.md) and [file output](file-output.md). Pipe/socket

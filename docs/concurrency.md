@@ -108,6 +108,8 @@ wait timeout/interruption events. A wait result includes the target's handle
 and state even when the wait times out or is interrupted.
 Request timeout and cancellation before the first network step have no response
 metadata. Completed snapshots survive subsequent calls, reset, and unload.
+Use [header lookup](headers.md) to extract duplicate field values from a saved
+`headers` snapshot without changing the current handle/event or driving the pool.
 
 With `submit --output-fd FD`, response bytes go directly to a writable regular
 file. `body` stays empty; `bytes` reports written bytes. The owned duplicate is

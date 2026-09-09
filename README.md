@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.6.0-dev** is intended for trying in a project: methods, request
+Version **0.7.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -139,6 +139,23 @@ concurrent HTTP. Response bytes go directly to the file; `body` is empty and
 `bytes` reports bytes written. The module owns a duplicate during the transfer.
 See [file output](docs/file-output.md) for offsets, limits and partial failures.
 
+## Read response headers
+
+```zsh
+typeset -a cookies
+zcurl headers Set-Cookie --from "$response[headers]" --result cookies
+for cookie in "${cookies[@]}"; do
+    # Each occurrence remains a separate value, in response order.
+    print -r -- "$cookie"
+done
+```
+
+Lookup is case-insensitive and selects the last response block, excluding
+informational responses. Use `--trailers` to query its trailers instead.
+The command works on saved snapshots and preserves all `zcurl_*` transfer
+results. See [header lookup](docs/headers.md) for normalization, validation
+and the distinction between absent fields and empty values.
+
 ## Concurrent HTTP
 
 ```zsh
@@ -257,15 +274,17 @@ limits return 23 with a specific `error_kind`. Native usage/result-publication
 errors return 2. File read failures or premature EOF return 42 with
 `error_kind=input`. The shell may apply its own signal termination semantics.
 
-Normal invocations clear the global result first, including invalid calls and
+Transfer invocations clear the global result first, including invalid calls and
 `--help`, `--version`, and `--reset`. Once a valid `--result ARRAY` option has
 been parsed, subsequent validation errors are also written there. If parsing
 fails before that option, the array is untouched; use the global error fields.
 Place `--result` first when building a wrapper, and always check exit status.
+`zcurl headers` is a lookup operation: it preserves the transfer result even
+when lookup fails, and reports errors on stderr with a nonzero exit status.
 Inherited-child and reentrant calls are rejected without replacing the active
 owner's result.
 
-Results require an existing ordinary writable associative array (`typeset -A`
+Transfer results require an existing ordinary writable associative array (`typeset -A`
 at top level, `local -A` in a function). Scalars, readonly/special/tied arrays,
 case-converting arrays, and subscript expressions are rejected before HTTP.
 The destination is checked again after the transfer, because a signal trap

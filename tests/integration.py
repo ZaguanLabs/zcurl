@@ -529,6 +529,9 @@ if __name__ == "__main__":
         streaming_test(env, plain, temp)
         upload_test(env, plain, temp)
         before = plain.request_count
+        print(run(env, (ROOT / 'tests' / 'headers.zsh').read_text()))
+        assert plain.request_count == before + 5, 'header lookups caused unexpected HTTP I/O'
+        before = plain.request_count
         run(env, LOAD + '''
             setopt errexit
             typeset -A response

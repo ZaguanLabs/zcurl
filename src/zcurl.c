@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define ZCURL_VERSION "0.6.0-dev"
+#define ZCURL_VERSION "0.7.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -775,6 +775,8 @@ help(void)
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
+         "zcurl headers FIELD --from RAW --result ARRAY [--trailers]\n"
+         "  Look up response fields in an indexed array; preserve zcurl_* results.\n"
          "zcurl http submit HANDLE [HTTP options] URL\n"
          "zcurl http poll [-t MS] [-r ARRAY]\n"
          "zcurl http wait HANDLE [-t MS] [-r ARRAY]\n"
@@ -789,6 +791,7 @@ help(void)
 
 #include "websocket.c"
 #include "http_async.c"
+#include "http_headers.c"
 
 static int
 bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
@@ -802,6 +805,10 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
     }
     queue_signals();
     busy = 1;
+    if (args[0] && (control = text_argument(args[0])) && !strcmp(control, "headers")) {
+        result = headers_command(args + 1);
+        goto finished;
+    }
     clear_result();
     r.timeout = 10000;
     r.connect_timeout = 3000;
@@ -839,6 +846,7 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
 done:
     curl_slist_free_all(r.headers);
     result = (int)return_status;
+finished:
     busy = 0;
     unqueue_signals();
     return result;
