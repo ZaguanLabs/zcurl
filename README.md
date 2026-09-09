@@ -119,6 +119,10 @@ collection publishes the response and releases the handle. `cancel` preserves
 a partial response for collection; `drop` discards a request. Up to 32 named
 requests can coexist, within a shared 128 MiB storage reservation limit.
 
+Use `zcurl http wait users --timeout 1000` to wait for one named request while
+the entire HTTP pool advances. A wait timeout preserves the request; a successful
+wait leaves its result ready for collection.
+
 See the [concurrency contract](docs/concurrency.md) for deadlines, result fields,
 error handling and lifecycle, or run [examples/concurrent.zsh](examples/concurrent.zsh)
 with several URLs. The existing `zcurl [options] URL` API remains synchronous.

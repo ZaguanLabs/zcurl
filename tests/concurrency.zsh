@@ -48,6 +48,87 @@ for scheme in HTTP HTTPS; do
     check "$seen[second]" /parallel/two
 done
 
+# Waiting for one handle still drives both sides of a response barrier.
+for scheme in HTTP HTTPS; do
+    typeset base=${(P)${:-ZCURL_TEST_$scheme}}
+    zcurl http submit first -c "$ZCURL_TEST_CA" -- "$base/parallel/one"
+    zcurl http submit second -c "$ZCURL_TEST_CA" -- "$base/parallel/two"
+    zcurl http wait second -r event
+    check $event[event] ready
+    check $event[handle] second
+    check $event[state] done
+    check "$event[body]" ''
+    (( ${#event} == 16 )) || fail 'wait result shape'
+    zcurl http collect second -r response
+    check "$response[body]" /parallel/two
+    zcurl http wait first
+    zcurl http collect first -r response
+    check "$response[body]" /parallel/one
+done
+
+# A short wait neither consumes another ready result nor cancels its target.
+zcurl http submit retained -- "$ZCURL_TEST_HTTP/tiny"
+ready
+zcurl http submit waiting -- "$ZCURL_TEST_HTTP/slow"
+expect_code 28 zcurl http wait waiting -r event --timeout 0
+check $event[event] timeout
+check $event[error_kind] wait-timeout
+check $event[code] 0
+check $event[state] pending
+typeset wait_started=$EPOCHREALTIME
+expect_code 28 zcurl http wait waiting -r event --timeout 20
+(( EPOCHREALTIME - wait_started < 2 )) || fail 'wait exceeded its scheduling allowance'
+check $event[handle] waiting
+zcurl http info retained -r response
+check $response[state] done
+zcurl http wait waiting -r event --timeout 2000
+check $event[event] ready
+check $event[error_kind] none
+zcurl http collect waiting -r response
+check "$response[body]" $'ok\n'
+zcurl http collect retained
+
+# Other requests may time out while a selected wait continues.
+zcurl http submit expiring --timeout 20 -- "$ZCURL_TEST_HTTP/slow"
+zcurl http submit survivor -- "$ZCURL_TEST_HTTP/slow"
+zcurl http wait survivor -r event --timeout 2000
+check $event[handle] survivor
+zcurl http collect survivor
+zcurl http wait expiring -r event --timeout 0
+check $event[event] ready
+check $event[code] 0
+expect_code 28 zcurl http collect expiring -r response
+check $response[error_kind] transport
+zcurl http submit failed --fail -- "$ZCURL_TEST_HTTP/missing"
+zcurl http wait failed -r event
+check $event[status] 0
+expect_code 22 zcurl http collect failed
+zcurl http submit cancelled -- "$ZCURL_TEST_HTTP/tiny"
+zcurl http cancel cancelled
+zcurl http wait cancelled -r event --timeout 0
+check $event[state] cancelled
+expect_code 42 zcurl http collect cancelled
+
+# Wait validates its arguments and destination before driving the pool.
+zcurl http submit validated -- "$ZCURL_TEST_HTTP/tiny"
+expect_code 2 zcurl http wait validated -r event --timeout 600001
+check $event[error_kind] usage
+expect_code 2 zcurl http wait validated --timeout -1
+expect_code 2 zcurl http wait validated --timeout 1 -t 2
+expect_code 2 zcurl http wait missing -r event
+expect_code 2 zcurl http wait validated -r 'event[body]'
+zcurl http info validated -r event
+check $event[state] pending
+wait_scoped() {
+    emulate -L zsh
+    setopt ksharrays shwordsplit globsubst
+    local -A event
+    zcurl http wait validated -r event
+    [[ ${event[handle]} == validated && ${event[event]} == ready ]] || fail 'wait scope'
+}
+wait_scoped
+zcurl http collect validated
+
 # Submission must outlive the submitting function's arguments and locals.
 zcurl "$ZCURL_TEST_HTTP/bytes"
 typeset payload=$zcurl_body

@@ -1,7 +1,7 @@
 # Concurrent HTTP (0.4.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
-Submit named requests, call `poll` to advance them, and `collect` their results.
+Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
 No worker or thread drives requests while the shell runs other commands.
 
 ```zsh
@@ -30,6 +30,7 @@ cleanup and continues collecting when individual requests fail.
 ```text
 zcurl http submit HANDLE [HTTP options] URL
 zcurl http poll [-r ARRAY] [-t MS]
+zcurl http wait HANDLE [-r ARRAY] [-t MS]
 zcurl http collect HANDLE [-r ARRAY]
 zcurl http cancel HANDLE [-r ARRAY]
 zcurl http drop HANDLE [-r ARRAY]
@@ -51,6 +52,7 @@ are not supported. Only submission headers can repeat.
 | --- | --- |
 | `submit` | Accepts the existing HTTP request options, including methods, literal binary data, headers, CA file, `--fail`, timeouts, and `--max-body`. Copies request data and configuration, then attaches the request to the pool without network I/O. Returns `event=submitted`, `state=pending`. Its result array receives only this acknowledgment and is not remembered. |
 | `poll` | Advances all pending HTTP jobs. `-t`/`--timeout` is 0..1000 ms, default 0. Returns one retained terminal handle as `event=ready`, or `event=idle` with an empty handle. It does not copy response payloads or consume a result. |
+| `wait` | Advances all pending jobs until the named request is terminal or the wait expires. `-t`/`--timeout` is 0..600000 ms, default 10000. Returns 0 with `event=ready` for the target, even if its transfer failed. A wait timeout returns 28 with `event=timeout`, `error_kind=wait-timeout`, and `code=0`, preserving the request. No response is consumed. |
 | `collect` | Copies a terminal response into global parameters and the optional array, returns its HTTP/transport status, then releases the handle. Returns `event=collected`, with `state=done` or `cancelled`. A pending request returns 2 and remains available. |
 | `cancel` | Stops one pending request immediately, preserving any partial body/headers for collection. Returns 0 with `event=cancelled`, `state=cancelled`. Cancelling an already terminal request returns 2 without changing its result. |
 | `drop` | Releases a pending or terminal request without collecting it; returns `event=dropped`, `state=dropped`. Unknown handles return 2. |
@@ -61,6 +63,21 @@ the outcome. If several jobs are ready, the first in submission order is
 reported. Until collected or dropped, that handle can be reported again.
 Polling still gives pending jobs a network step before reporting retained
 results, so an uncollected result does not prevent their progress.
+
+Use `wait` when the next operation needs one particular response. Other ready
+results do not end the wait, and other pending requests continue to progress.
+This also works when requests depend on each other making network progress.
+
+```zsh
+# After submitting users and teams:
+if zcurl http wait users -r event --timeout 1000; then
+    zcurl http collect users -r response
+elif [[ $event[error_kind] == wait-timeout ]]; then
+    # users is still pending. Wait/poll again, or cancel/drop it.
+    print -r -- 'Still waiting for users'
+fi
+# teams remains available for its own wait/collection.
+```
 
 ## Results and ownership
 
@@ -80,13 +97,15 @@ WebSocket snapshots keep their existing shape. The corresponding global
 
 Successfully publishing an error response also consumes its handle. An invalid
 result destination does not consume it. If publication fails, the global result
-remains available and collection can be retried. A `poll` destination changed
+remains available and collection can be retried. A `poll` or `wait` destination changed
 by a signal trap returns 2 with `error_kind=result`; all jobs remain available.
 
 For control operations, status/code describe the operation rather than the
 transfer. Successful controls set `code=0`; `complete` remains 0. Body, headers,
 HTTP status, URL, type, connection count and timing are populated on collection.
-`bytes` also reports buffered body bytes on `info`, `ready`, and `cancelled`.
+`bytes` also reports buffered body bytes on `info`, `ready`, `cancelled`, and
+wait timeout/interruption events. A wait result includes the target's handle
+and state even when the wait times out or is interrupted.
 Request timeout and cancellation before the first network step have no response
 metadata. Completed snapshots survive subsequent calls, reset, and unload.
 
@@ -99,12 +118,26 @@ at 100 ms and libcurl can shorten them for its timers. An empty pool returns
 OS scheduling, trap execution and work within a libcurl call can exceed it.
 It is not a hard real-time or per-byte work limit.
 
+`wait` uses the same driver and 100 ms socket-wait bound, but continues beyond
+the poll iteration limit until the target finishes, the wait deadline expires,
+or a signal interrupts it. Timeout zero performs one immediate driver iteration;
+if the target is still pending, it returns a wait timeout. The same backend
+blocking and scheduling caveats apply to `wait`.
+
 The request `--timeout` is 1..600000 ms (default 10000) and starts when submission
-is accepted. Time spent between polls counts. Expiration is enforced at the
-next poll, including before the first network step. An expired request can
+is accepted. Time spent between driver calls counts. Expiration is enforced by
+polling or waiting, including before the first network step. An expired request can
 therefore return 28 without contacting its server. `info` does not update
 deadlines. `--connect-timeout` retains its normal libcurl meaning, with the
 submission deadline also applying.
+
+The wait deadline is independent of the request deadline. Expiring the wait
+does not cancel or extend the request. If the request deadline expires first,
+`wait` reports a ready result with status 0; `collect` then returns 28 with
+`error_kind=transport`. If the wait deadline expires first, `wait` itself returns
+28 with `error_kind=wait-timeout` and `code=0`. Subsequent operations can still
+finish or cancel that request. A cancelled or failed target is also ready for
+collection, so waiting for it succeeds without erasing its original outcome.
 
 At most 32 handles, including completed and cancelled records, can coexist.
 Admission also reserves at most 128 MiB across jobs, counting each configured
@@ -122,22 +155,22 @@ configuration and upload copies remain owned until collection/drop/reset/unload.
 
 The concurrent pool retains connections between requests. It is separate from
 the synchronous HTTP pool and WebSocket connections. Synchronous requests and
-WS polling do not advance concurrent HTTP jobs. Concurrent HTTP polling does
-not advance WebSockets. TLS verification, protocol restrictions, redirect
+WS polling do not advance concurrent HTTP jobs. Concurrent HTTP polling/waiting
+does not advance WebSockets. TLS verification, protocol restrictions, redirect
 behavior, proxy environment handling and absence of a cookie engine match the
 existing HTTP API; named jobs are not isolated credential sessions.
 
 Signals are queued around libcurl and publication, then delivered between
-driver steps. Ctrl-C stops polling and preserves outstanding jobs when Zsh's
-signal semantics allow subsequent execution. A returned interrupted poll uses
+driver steps. Ctrl-C stops polling/waiting and preserves outstanding jobs when
+Zsh's signal semantics allow subsequent execution. An interrupted poll or wait uses
 status 42 and `error_kind=interrupted`. Traps cannot reenter `zcurl`, change its
 module features, or unload it while a command is active.
 
 Only the shell that loaded the module may operate on its requests. Inherited
 forks, command substitutions, and background subshells remain rejected.
 `zcurl --reset` or module unload discards all HTTP and WS state, including
-pending and uncollected requests. There is no `wait` command, automatic event
-loop, ZLE integration, or worker in this milestone.
+pending and uncollected requests. There is no automatic event loop, ZLE
+integration, or worker in this milestone.
 
 ## References
 

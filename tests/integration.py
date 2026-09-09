@@ -336,6 +336,13 @@ def interrupt_test(env, plain):
         os.write(fd, b'zcurl http info active; print -r -- "HTTP_PRESERVED:$?:$zcurl_state"\n')
         wait_for(b"\r\nHTTP_PRESERVED:0:pending\r\n", timeout=2)
         assert time.monotonic() - start < 1.5, 'HTTP poll cancellation was delayed'
+        os.write(fd, b'print -r -- HTTP_WAIT_BEGIN; zcurl http wait active --timeout 600000\n')
+        wait_for(b"\r\nHTTP_WAIT_BEGIN\r\n")
+        start = time.monotonic()
+        os.write(fd, b'\x03')
+        os.write(fd, b'zcurl http info active; print -r -- "HTTP_WAIT_PRESERVED:$?:$zcurl_state"\n')
+        wait_for(b"\r\nHTTP_WAIT_PRESERVED:0:pending\r\n", timeout=2)
+        assert time.monotonic() - start < 1.5, 'HTTP wait cancellation was delayed'
         os.write(fd, b'TRAPUSR1() { zcurl http cancel active; print -r -- "HTTP_REENTRY:$?"; zmodload -u zcurl; print -r -- "HTTP_UNLOAD:$?"; unset response; typeset -g response=changed; }; print -r -- HTTP_TRAP_READY\n')
         wait_for(b"\r\nHTTP_TRAP_READY\r\n")
         os.write(fd, b'zcurl http submit finishing -- "$ZCURL_TEST_HTTP/slow"; print -r -- HTTP_POLL_BEGIN; zcurl http poll -r response --timeout 1000; print -r -- "HTTP_MUTATION:$?:$zcurl_error_kind:$response"\n')
@@ -344,10 +351,15 @@ def interrupt_test(env, plain):
         wait_for(b"\r\nHTTP_REENTRY:2\r\n")
         wait_for(b"\r\nHTTP_UNLOAD:1\r\n")
         wait_for(b"\r\nHTTP_MUTATION:2:result:changed\r\n")
-        os.write(fd, b'unfunction TRAPUSR1; unset response; typeset -A response; zcurl http collect finishing -r response; print -r -- "HTTP_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http cancel active; zcurl http collect active -r response; print -r -- "HTTP_CANCELLED:$?:$response[state]:$response[error_kind]"; zcurl --reset\n')
+        os.write(fd, b'unset response; typeset -A response; zcurl http submit wait_finishing -- "$ZCURL_TEST_HTTP/slow"; print -r -- HTTP_WAIT_MUTATION_BEGIN; zcurl http wait wait_finishing -r response --timeout 1000; print -r -- "HTTP_WAIT_MUTATION:$?:$zcurl_error_kind:$response:$zcurl_handle"\n')
+        wait_for(b"\r\nHTTP_WAIT_MUTATION_BEGIN\r\n")
+        os.kill(pid, signal.SIGUSR1)
+        wait_for(b"\r\nHTTP_WAIT_MUTATION:2:result:changed:wait_finishing\r\n")
+        os.write(fd, b'unfunction TRAPUSR1; unset response; typeset -A response; zcurl http collect wait_finishing -r response; print -r -- "HTTP_WAIT_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http collect finishing -r response; print -r -- "HTTP_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http cancel active; zcurl http collect active -r response; print -r -- "HTTP_CANCELLED:$?:$response[state]:$response[error_kind]"; zcurl --reset\n')
+        wait_for(b"\r\nHTTP_WAIT_RETAINED:0:200:1\r\n")
         wait_for(b"\r\nHTTP_RETAINED:0:200:1\r\n")
         wait_for(b"\r\nHTTP_CANCELLED:42:cancelled:cancelled\r\n")
-        print('PASS: PTY concurrent HTTP interrupt preserves requests; reentry/unload and result mutation guards hold')
+        print('PASS: PTY concurrent HTTP poll/wait interrupts preserve requests; reentry/unload and result mutation guards hold')
     finally:
         os.close(fd)
         try:

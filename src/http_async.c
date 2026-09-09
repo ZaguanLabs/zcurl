@@ -163,15 +163,16 @@ memory:
     return NULL;
 }
 
-/* Return one retained completion, without consuming it. Each call also gives
- * pending requests a network step so an uncollected result cannot starve them. */
+/* Return a retained completion without consuming it. A target selects wait
+ * semantics: drive every job, but ignore unrelated completions and continue
+ * until this target finishes or the caller's deadline/signal stops the wait. */
 static struct http_job *
-http_poll(long timeout)
+http_drive(long timeout, struct http_job *target)
 {
     int64_t deadline = monotonic_ms() + timeout;
-    int steps;
+    int steps = 0;
     replace_text(&event_text, "idle", 4);
-    for (steps = 0; steps < HTTP_STEPS; ++steps) {
+    do {
         struct http_job *j, *ready = NULL;
         int stop, running = 0, remaining;
         int64_t now, wait_ms;
@@ -182,7 +183,7 @@ http_poll(long timeout)
         queue_signals();
         if (stop) {
             curl_code = CURLE_ABORTED_BY_CALLBACK;
-            set_error("interrupted", "HTTP poll interrupted; requests remain available", 42);
+            set_error("interrupted", "HTTP polling/wait interrupted; requests remain available", 42);
             replace_text(&event_text, "interrupted", 11);
             return NULL;
         }
@@ -216,15 +217,18 @@ http_poll(long timeout)
         now = monotonic_ms();
         wait_ms = deadline - now;
         for (j = http_jobs; j; j = j->next) {
-            if (j->done && !ready) ready = j;
+            if (j->done && (!target || j == target) && !ready) ready = j;
             if (!j->done && j->deadline - now < wait_ms)
                 wait_ms = j->deadline - now;
         }
         if (ready) return ready;
-        if (!running || wait_ms <= 0) return NULL;
+        if (!running || now >= deadline) return NULL;
+        /* A different request's deadline may have expired during this step.
+         * Process it without treating it as the selected wait's deadline. */
+        if (wait_ms <= 0) continue;
         mc = curl_multi_poll(http_pool, NULL, 0, wait_ms > 100 ? 100 : (int)wait_ms, NULL);
         if (mc != CURLM_OK) { http_pool_fail(mc); return NULL; }
-    }
+    } while (target || ++steps < HTTP_STEPS);
     return NULL;
 }
 
@@ -260,11 +264,13 @@ http_command(char **args)
     char *op, *name = NULL;
     long timeout = 0;
     unsigned seen = 0;
-    int collect = 0;
+    int collect = 0, waiting;
     r.timeout = 10000; r.connect_timeout = 3000; r.max_body = BODY_LIMIT;
     if (!*args || !(op = text_argument(*args++))) goto usage;
+    waiting = !strcmp(op, "wait");
     if (strcmp(op, "submit") && strcmp(op, "poll") && strcmp(op, "collect") &&
-        strcmp(op, "cancel") && strcmp(op, "drop") && strcmp(op, "info")) goto usage;
+        strcmp(op, "cancel") && strcmp(op, "drop") && strcmp(op, "info") && !waiting) goto usage;
+    if (waiting) timeout = 10000;
     if (strcmp(op, "poll")) {
         if (!*args || !(name = text_argument(*args++)) || !identifier(name) || strlen(name) > 64) goto usage;
         replace_text(&handle_text, name, strlen(name));
@@ -282,23 +288,34 @@ http_command(char **args)
         if (!arg) goto usage;
         if (!strcmp(arg, "--") && !*args) break;
         if (!strcmp(arg, "-r") || !strcmp(arg, "--result")) bit = 1;
-        else if ((!strcmp(arg, "-t") || !strcmp(arg, "--timeout")) && !strcmp(op, "poll")) bit = 2;
+        else if ((!strcmp(arg, "-t") || !strcmp(arg, "--timeout")) && (waiting || !strcmp(op, "poll"))) bit = 2;
         else goto usage;
         if ((seen & bit) || !*args || !(value = text_argument(*args++))) goto usage;
         seen |= bit;
         if (bit == 1) {
             if (!result_parameter(value)) goto usage;
             r.result = value;
-        } else if (!decimal(value, 0, 1000, &timeout)) goto usage;
+        } else if (!decimal(value, 0, waiting ? 600000 : 1000, &timeout)) goto usage;
     }
     curl_code = CURLE_OK;
     if (!strcmp(op, "poll")) {
-        j = http_poll(timeout);
+        j = http_drive(timeout, NULL);
         if (j) http_snapshot(j, "ready");
         goto done;
     }
     j = http_find(name);
     if (!j) { set_error("state", "unknown HTTP handle", 2); goto done; }
+    if (waiting) {
+        if (http_drive(timeout, j)) {
+            http_snapshot(j, "ready");
+        } else if (!return_status) {
+            http_snapshot(j, "timeout");
+            set_error("wait-timeout", "HTTP wait timed out; request remains available", 28);
+        } else {
+            http_snapshot(j, !strcmp(error_kind, "interrupted") ? "interrupted" : "error");
+        }
+        goto done;
+    }
     http_snapshot(j, "info");
     if (!strcmp(op, "info")) goto done;
     if (!strcmp(op, "collect")) {

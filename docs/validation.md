@@ -66,10 +66,14 @@ environment above. Tests run in fresh shells and include:
   limits; submission deadlines expiring before the first network step.
 - Pending/duplicate/unknown handles, rejected destinations preserving results,
   repeated ready events and continued progress with an uncollected completion.
+- Named waits driving both sides of HTTP/HTTPS response barriers, preserving
+  unrelated ready results, and continuing when another request times out.
+  Wait timeouts preserve pending requests for later completion; already failed
+  or cancelled targets remain collectable with their original outcome.
 - The 32-handle and 128 MiB reservation limits, rejection before response
   allocation, release on collection/drop, and reset/unload of outstanding jobs.
-- PTY Ctrl-C preserving pending jobs; trap attempts to cancel/reenter/unload
-  during polling being rejected; a trap changing a poll destination without
+- PTY Ctrl-C in poll and wait preserving pending jobs; trap attempts to cancel/reenter/unload
+  being rejected; a trap changing a poll or wait destination without
   losing the completed response.
 
 This is explicit cooperative HTTP concurrency. Autonomous background progress,

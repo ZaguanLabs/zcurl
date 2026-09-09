@@ -584,6 +584,7 @@ help(void)
          "zcurl --help                Show this help\n"
          "zcurl http submit HANDLE [HTTP options] URL\n"
          "zcurl http poll [-t MS] [-r ARRAY]\n"
+         "zcurl http wait HANDLE [-t MS] [-r ARRAY]\n"
          "zcurl http collect|cancel|drop|info HANDLE [-r ARRAY]\n"
          "  See docs/concurrency.md for scheduling, limits and result ownership.\n"
          "zcurl ws OP HANDLE [options] [URL]\n"
