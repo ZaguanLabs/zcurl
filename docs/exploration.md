@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.4.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.5.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -53,9 +53,10 @@ requests turn out to be the main need.
    through dynamic scope. Readonly/special/converting targets are rejected.
    Raw response headers preserve duplicates, informational blocks and trailers;
    a convenient structured header-access API remains to be designed.
-2. **Streaming.** Keep bulk bodies on descriptors or files with backpressure;
-   scalar results are convenient for bounded API responses. Literal binary
-   request bodies, methods and caller-supplied headers now work.
+2. **Streaming.** HTTP responses can now stream to caller-opened regular-file
+   descriptors without accumulating scalar bodies; see [file output](file-output.md).
+   Pipe/socket sinks need explicit backpressure, and request-body streaming is
+   still open. Scalars remain convenient for bounded API requests and responses.
 3. **Session identity.** Named sessions could separate credentials, cookies,
    proxy settings and trust configuration. `curl_easy_reset` resets options
    but retains caches and other state; it is not a security isolation boundary.

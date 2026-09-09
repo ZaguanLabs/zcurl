@@ -109,6 +109,11 @@ and state even when the wait times out or is interrupted.
 Request timeout and cancellation before the first network step have no response
 metadata. Completed snapshots survive subsequent calls, reset, and unload.
 
+With `submit --output-fd FD`, response bytes go directly to a writable regular
+file. `body` stays empty; `bytes` reports written bytes. The owned duplicate is
+closed at transfer completion/cancellation, before collection. Partial file
+writes survive failures and result-publication errors. See [file output](file-output.md).
+
 ## Scheduling, deadlines and storage
 
 Each `poll` stops at a completion, its deadline, or 64 driver iterations.
@@ -141,7 +146,7 @@ collection, so waiting for it succeeds without erasing its original outcome.
 
 At most 32 handles, including completed and cancelled records, can coexist.
 Admission also reserves at most 128 MiB across jobs, counting each configured
-response-body limit, 256 KiB for response headers, literal upload bytes,
+response-body limit (except for file output), 256 KiB for response headers, literal upload bytes,
 request header bytes, and copied URL/CA/method strings. Reservation lasts until
 collection or drop, even after cancellation. This conservative accounting
 rejects work before response storage is needed. Lower `--max-body` when

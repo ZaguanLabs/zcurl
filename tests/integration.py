@@ -34,6 +34,7 @@ class Server(http.server.ThreadingHTTPServer):
         self.ws_errors = []
         self.ws_release = threading.Event()
         self.http_release = threading.Event()
+        self.stream_release = threading.Event()
         self.http_barrier = threading.Barrier(2)
 
     def handle_error(self, request, client_address):
@@ -72,16 +73,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.server.ws_release.set()
         if self.path == "/release-http":
             self.server.http_release.set()
+        if self.path == "/release-stream":
+            self.server.stream_release.set()
         if self.path.startswith("/parallel/"):
             # Neither response can finish until both requests arrive.
             self.server.http_barrier.wait(timeout=5)
-        if self.path == "/held":
+        if self.path in ("/held", "/stream-held"):
             self.send_response(200)
             self.send_header("Content-Length", "10")
             self.end_headers()
             self.wfile.write(b"part")
             self.server.slow_started.set()
-            assert self.server.http_release.wait(10), "held HTTP request was never released"
+            release = self.server.stream_release if self.path == "/stream-held" else self.server.http_release
+            assert release.wait(10), "held HTTP request was never released"
             self.wfile.write(b"-final")
             return
         if self.path == "/slow":
@@ -259,6 +263,53 @@ def loader_test(env):
     print("PASS: project example runs outside the checkout and preserves response bytes")
 
 
+def streaming_test(env, plain, temp):
+    before = plain.request_count
+    print(run(env, LOAD + '''
+        setopt errexit
+        typeset -A response
+        exec {input}<"$ZCURL_TEST_CA"
+        exec {device}>/dev/null
+        for fd in "$input" "$device" -1 2147483647 '1+1'; do
+            zcurl -r response --output-fd "$fd" -- "$ZCURL_TEST_HTTP/tiny" && exit 1
+            [[ $response[status] == 2 && $response[code] == -1 ]] || exit 2
+            zcurl http submit invalid -r response --output-fd "$fd" -- "$ZCURL_TEST_HTTP/tiny" && exit 3
+            [[ $response[status] == 2 ]] || exit 4
+        done
+        zcurl --output-fd 1 "$ZCURL_TEST_HTTP/tiny" && exit 5
+        # stdout here is a pipe; unsupported descriptors must never start I/O.
+        print -r -- 'PASS: invalid/read-only/nonregular output descriptors rejected before HTTP'
+    '''))
+    assert plain.request_count == before, 'invalid output descriptor caused HTTP I/O'
+    print(run(env, (ROOT / 'tests' / 'streaming.zsh').read_text()))
+    binary = bytes(range(256)) + b'\n\n'
+    assert (temp / 'stream-sync.bin').read_bytes() == b'prefix' + binary + b'suffix'
+    assert (temp / 'stream-async.bin').read_bytes() == binary
+    assert (temp / 'stream-reused.bin').read_bytes() == b'untouched'
+    assert (temp / 'stream-append.bin').read_bytes() == b'start' + b'ok\n' * 2
+    assert (temp / 'stream-http-error.bin').read_bytes() == b'ok\n'
+    assert (temp / 'stream-partial.bin').read_bytes() == b'part'
+    assert (temp / 'stream-limit.bin').read_bytes() == b''
+    assert (temp / 'stream-large.bin').read_bytes() == b'x' * (8 * 1024 * 1024 + 1)
+    # A per-shell file-size limit forces a short write followed by EFBIG.
+    # Ignore SIGXFSZ so the module can report the write failure and byte count.
+    count = int(run(env, LOAD + '''
+        setopt errexit
+        trap '' XFSZ
+        ulimit -f 1
+        exec {out}>"$ZCURL_TEST_TMP/stream-write-error.bin"
+        typeset -A response
+        zcurl -r response --output-fd "$out" --max-body 16777216 -- "$ZCURL_TEST_HTTP/large" && exit 1
+        [[ $response[status] == 23 && $response[code] == 23 &&
+           $response[error_kind] == output && $response[complete] == 0 && -z $response[body] ]] || exit 2
+        exec {out}>&-
+        print -r -- "$response[bytes]"
+    '''))
+    assert 0 < count < 8 * 1024 * 1024
+    assert (temp / 'stream-write-error.bin').read_bytes() == b'x' * count
+    print('PASS: direct file bytes, partial write failures and descriptor ownership independently verified')
+
+
 def interrupt_test(env, plain):
     plain.slow_started.clear()
     pid, fd = pty.fork()
@@ -426,6 +477,7 @@ if __name__ == "__main__":
         integration(env, plain, tls, temp)
         api_test(env, plain, temp)
         loader_test(env)
+        streaming_test(env, plain, temp)
         before = plain.request_count
         run(env, LOAD + '''
             setopt errexit

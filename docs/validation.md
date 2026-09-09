@@ -1,7 +1,7 @@
-# Validation of 0.4.0-dev
+# Validation of 0.5.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
-3.5.7. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
+3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
 check treats warnings as errors. Other Zsh builds and platforms are untested.
 
 ## Reproduce
@@ -45,6 +45,28 @@ No public endpoints, account credentials or system certificate changes are used.
 The synchronous multi driver queues Zsh signals around libcurl calls and
 delivers them between calls. Tests establish these specific behaviors, not
 every resolver, signal trap, job-control combination, or backend behavior.
+
+## File-output coverage
+
+`--output-fd` is tested for synchronous HTTP and concurrent HTTPS with ordinary
+regular files. Binary file contents are checked independently in Python.
+
+- All 256 byte values, NUL and trailing newlines; an 8 MiB-plus response written
+  without a scalar body; raw byte counts and unchanged result shapes.
+- Existing file offsets and append mode; original descriptors still writable
+  after synchronous transfers; closing/reusing originals after submission.
+- Private duplicates absent in executed children, released before collection,
+  and released by cancellation, drop, reset and unload. Linux `/proc` checks
+  count descriptors for the specific fixture files.
+- Invalid, read-only and nonregular destinations rejected before HTTP I/O;
+  body-limit and HTTP-error responses; a cancelled response retaining its prefix.
+- A per-shell file-size limit forcing a short write followed by a write error,
+  with status 23, `error_kind=output`, and the exact byte count checked on disk.
+- All 32 file-output jobs fitting without scalar-body reservations even with
+  large response limits; reset releasing their duplicate descriptors.
+
+File output remains bounded by `--max-body`. Pipe/socket backpressure and
+filesystem durability are outside this milestone; see [the contract](file-output.md).
 
 ## Concurrent HTTP coverage
 
@@ -161,7 +183,7 @@ startup and the relevant module/process startup. Server connection counts are
 reported separately. Run benchmarks without concurrent memory checks or other
 heavy work. This is a loopback overhead experiment, not a WAN throughput test.
 
-File/descriptor streaming, autonomous background transfers, arbitrary fork inheritance,
+Pipe/socket streaming, request-body streaming, autonomous background transfers, arbitrary fork inheritance,
 automatic redirects, cookies, named sessions, HTTP/2/3-specific behavior,
 proxy integration and cross-platform ABI compatibility still need their own
 implementation and/or test coverage before being relied on.

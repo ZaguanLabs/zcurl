@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.4.0-dev** is intended for trying in a project: methods, request
+Version **0.5.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -15,7 +15,7 @@ incremental receive through bounded polling. There is no autonomous background w
 
 ## Build and load
 
-Tested with Zsh 5.9.2 on Mageia x86_64, libcurl 8.21.0, and OpenSSL 3.5.7.
+Tested with Zsh 5.9.2 on Mageia x86_64, libcurl 8.21.0, and OpenSSL 3.5.8.
 Requirements: C compiler, make, pkg-config, libcurl development files >=8.16.0
 (with WS/WSS enabled), and matching configured Zsh headers. Tests additionally use Python 3, openssl,
 curl, and optional Valgrind.
@@ -101,6 +101,24 @@ keep secret-bearing calls out of diagnostic traces.
 See [examples/api-client.zsh](examples/api-client.zsh) for a runnable helper
 that writes into its caller's result array through Zsh's dynamic scope.
 
+## Write responses directly to files
+
+```zsh
+typeset -A response
+integer output_fd
+exec {output_fd}>response.bin || return
+{
+    zcurl -r response --output-fd "$output_fd" -- "$url"
+} always {
+    exec {output_fd}>&-
+}
+```
+
+`--output-fd` accepts a writable regular-file descriptor for synchronous or
+concurrent HTTP. Response bytes go directly to the file; `body` is empty and
+`bytes` reports bytes written. The module owns a duplicate during the transfer.
+See [file output](docs/file-output.md) for offsets, limits and partial failures.
+
 ## Concurrent HTTP
 
 ```zsh
@@ -167,6 +185,7 @@ zcurl --reset
 | `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
 | `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |
 | `--max-body BYTES` | Response body limit, 1..67108864; default 8388608 (8 MiB) |
+| `--output-fd FD` | Write response bytes to an open writable regular file, leaving `body` empty |
 | `--` | End of options |
 | `--reset` | Close HTTP and all WebSocket handles and clear the last result |
 
@@ -195,15 +214,15 @@ requests and module unload.
 
 | Field | Meaning |
 | --- | --- |
-| `body` | Raw response bytes, preserving NUL and trailing newlines |
+| `body` | Raw response bytes, preserving NUL and trailing newlines; empty with `--output-fd` |
 | `headers` | Raw headers, preserving CRLF, duplicates, interim blocks and trailers |
 | `http_status` | HTTP status; zero if none was received |
 | `code` | libcurl result; zero on transfer success; -1 if no transfer was attempted |
 | `status` | zcurl's shell return status |
-| `error_kind` | `none`, `usage`, `transport`, `http`, `body-limit`, `header-limit`, `memory`, or `result` |
+| `error_kind` | `none`, `usage`, `transport`, `http`, `body-limit`, `header-limit`, `output`, `memory`, or `result` |
 | `error` | Diagnostic text; empty on success |
 | `complete` | 1 if the transfer completed successfully, even for an HTTP error response |
-| `bytes` | Raw body bytes stored, rather than character count |
+| `bytes` | Raw body bytes stored, or successfully written with `--output-fd` |
 | `effective_url` | URL reported by libcurl |
 | `content_type` | Content type reported by libcurl, or empty |
 | `new_connections` | Newly opened connections during the transfer |
@@ -284,4 +303,4 @@ of tiny loopback requests, not predictions for real API latency. Use
 
 [Exploration notes](docs/exploration.md) cover the architectural options.
 Next: integration feedback on the concurrent HTTP and WebSocket APIs,
-file/descriptor streaming, named HTTP sessions, and scheduling beyond explicit polling.
+pipe/socket streaming with backpressure, named HTTP sessions, and scheduling beyond explicit polling.

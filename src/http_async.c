@@ -40,6 +40,7 @@ http_destroy(struct http_job *j)
     }
     if (j->attached) curl_multi_remove_handle(http_pool, j->easy);
     if (j->easy) curl_easy_cleanup(j->easy);
+    close_output(&j->body);
     curl_slist_free_all(j->request_headers);
     free(j->body.data);
     free(j->headers.data);
@@ -68,6 +69,7 @@ http_pool_fail(CURLMcode mc)
         j->attached = 0;
         j->done = 1;
         j->code = CURLE_FAILED_INIT;
+        close_output(&j->body);
         snprintf(j->diagnostic, sizeof(j->diagnostic), "libcurl multi: %s", curl_multi_strerror(mc));
     }
     curl_multi_cleanup(http_pool);
@@ -87,6 +89,7 @@ http_finish(struct http_job *j, CURLcode code)
     }
     j->attached = 0;
     j->done = 1;
+    if (!close_output(&j->body) && code == CURLE_OK) code = CURLE_WRITE_ERROR;
     j->code = code;
     return 1;
 }
@@ -105,7 +108,7 @@ static struct http_job *
 http_submit(const char *name, struct request *r)
 {
     struct http_job *j, **tail = &http_jobs;
-    size_t count = 0, reserve = (size_t)r->max_body + HEADER_LIMIT;
+    size_t count = 0, reserve = (r->has_output ? 0 : (size_t)r->max_body) + HEADER_LIMIT;
     size_t sizes[] = {r->data_len, r->header_bytes, strlen(r->url) + 1,
                      r->ca ? strlen(r->ca) + 1 : 0,
                      r->method ? strlen(r->method) + 1 : 0};
@@ -134,6 +137,10 @@ http_submit(const char *name, struct request *r)
     if (!j->name || !j->easy || !http_pool) {
         http_destroy(j);
         goto memory;
+    }
+    if (!prepare_output(r, &j->body)) {
+        http_destroy(j);
+        return NULL;
     }
     rc = configure_http(j->easy, r, &j->body, &j->headers, j->diagnostic, 1);
     if (rc != CURLE_OK) {

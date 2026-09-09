@@ -7,8 +7,11 @@
 #include <inttypes.h>
 #include <poll.h>
 #include <time.h>
+#include <limits.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
-#define ZCURL_VERSION "0.4.0-dev"
+#define ZCURL_VERSION "0.5.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -25,18 +28,19 @@ static char *handle_text, *event_text, *state_text, *ws_type, *ws_close_reason;
 static zlong ws_offset, ws_bytesleft, ws_more, ws_message_end;
 static zlong ws_queued_bytes, ws_queued_frames, ws_close_code;
 
-enum buffer_failure { BUFFER_OK, BUFFER_LIMIT, BUFFER_MEMORY };
+enum buffer_failure { BUFFER_OK, BUFFER_LIMIT, BUFFER_MEMORY, BUFFER_OUTPUT };
 struct buffer {
     char *data;
     size_t len, capacity, limit;
     enum buffer_failure failure;
+    int streaming, output_fd, output_errno;
 };
 
 struct request {
     char *url, *ca, *method, *data, *result;
     size_t data_len;
     long timeout, connect_timeout, max_body;
-    int fail_http, head, has_data;
+    int fail_http, head, has_data, has_output, output_fd;
     struct curl_slist *headers;
     size_t header_bytes;
 };
@@ -52,6 +56,21 @@ receive(char *data, size_t size, size_t count, void *context)
         return 0;
     }
     n = size * count;
+    if (b->streaming) {
+        size_t offset = 0;
+        while (offset < n) {
+            ssize_t written = write(b->output_fd, data + offset, n - offset);
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) {
+                b->failure = BUFFER_OUTPUT;
+                b->output_errno = written < 0 ? errno : EIO;
+                return CURL_WRITEFUNC_ERROR;
+            }
+            offset += (size_t)written;
+            b->len += (size_t)written;
+        }
+        return n;
+    }
     needed = b->len + n + 1;
     if (needed > b->capacity) {
         capacity = b->capacity ? b->capacity * 2 : 4096;
@@ -109,6 +128,48 @@ set_error(const char *kind, const char *message, int status)
     replace_text(&error_kind, kind, strlen(kind));
     replace_text(&error_text, message, strlen(message));
     return_status = status;
+}
+
+/* The duplicate shares the caller's file offset, but has its own lifetime.
+ * Register it so Zsh cannot close it through ordinary descriptor syntax. */
+static int
+prepare_output(struct request *r, struct buffer *b)
+{
+    struct stat st;
+    int flags, fd;
+    if (!r->has_output) return 1;
+    flags = fcntl(r->output_fd, F_GETFL);
+    if (flags < 0 || ((flags & O_ACCMODE) != O_WRONLY && (flags & O_ACCMODE) != O_RDWR) ||
+        fstat(r->output_fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+        set_error("usage", "--output-fd requires an open writable regular-file descriptor", 2);
+        return 0;
+    }
+    fd = fcntl(r->output_fd, F_DUPFD_CLOEXEC, 10);
+    if (fd < 0) {
+        set_error("output", "could not duplicate output descriptor", 2);
+        return 0;
+    }
+    addmodulefd(fd, FDT_MODULE);
+    b->streaming = 1;
+    b->output_fd = fd;
+    return 1;
+}
+
+static int
+close_output(struct buffer *b)
+{
+    if (b->streaming && b->output_fd >= 0) {
+        int fd = b->output_fd;
+        b->output_fd = -1;
+        if (zclose(fd) < 0) {
+            if (b->failure == BUFFER_OK) {
+                b->failure = BUFFER_OUTPUT;
+                b->output_errno = errno;
+            }
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static void
@@ -223,7 +284,7 @@ add_header(struct request *r, const char *value)
 }
 
 enum option_id { CA, TIMEOUT, CONNECT_TIMEOUT, METHOD, HEADER, DATA, RESULT,
-                 MAX_BODY, FAIL_HTTP, HEAD };
+                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD };
 struct option_spec { const char *short_name, *long_name; enum option_id id; int value; };
 static const struct option_spec option_specs[] = {
     {"-c", "--cacert", CA, 1},
@@ -236,6 +297,7 @@ static const struct option_spec option_specs[] = {
     {NULL, "--max-body", MAX_BODY, 1},
     {"-f", "--fail", FAIL_HTTP, 0},
     {"-I", "--head", HEAD, 0},
+    {NULL, "--output-fd", OUTPUT_FD, 1},
 };
 
 static int
@@ -321,6 +383,13 @@ parse_request(char **args, struct request *r)
             break;
         case FAIL_HTTP: r->fail_http = 1; break;
         case HEAD: r->head = 1; break;
+        case OUTPUT_FD: {
+            long fd;
+            if (!decimal(value, 0, INT_MAX, &fd)) goto invalid;
+            r->has_output = 1;
+            r->output_fd = (int)fd;
+            break;
+        }
         case DATA: break;
         }
     }
@@ -448,7 +517,7 @@ static void
 http_result(struct buffer *b, struct buffer *h, CURLcode rc,
             const char *diagnostic, int fail_http)
 {
-    replace_text(&body, b->data ? b->data : "", b->len);
+    replace_text(&body, b->data ? b->data : "", b->data ? b->len : 0);
     replace_text(&headers, h->data ? h->data : "", h->len);
     curl_code = rc;
     received_bytes = (zlong)b->len;
@@ -458,6 +527,8 @@ http_result(struct buffer *b, struct buffer *h, CURLcode rc,
         set_error("body-limit", "response body exceeds --max-body", (int)rc);
     else if (h->failure == BUFFER_LIMIT)
         set_error("header-limit", "response headers exceed 256 KiB", (int)rc);
+    else if (b->failure == BUFFER_OUTPUT)
+        set_error("output", strerror(b->output_errno), (int)rc);
     else if (b->failure == BUFFER_MEMORY || h->failure == BUFFER_MEMORY || rc == CURLE_OUT_OF_MEMORY)
         set_error("memory", "could not allocate transfer storage", (int)rc);
     else if (rc != CURLE_OK)
@@ -469,8 +540,8 @@ http_result(struct buffer *b, struct buffer *h, CURLcode rc,
 static void
 perform_request(struct request *r)
 {
-    struct buffer b = {NULL, 0, 0, (size_t)r->max_body, BUFFER_OK};
-    struct buffer h = {NULL, 0, 0, HEADER_LIMIT, BUFFER_OK};
+    struct buffer b = {.limit = (size_t)r->max_body};
+    struct buffer h = {.limit = HEADER_LIMIT};
     char diagnostic[CURL_ERROR_SIZE] = {0};
     long status = 0, connects = 0;
     curl_off_t elapsed = 0;
@@ -478,6 +549,7 @@ perform_request(struct request *r)
     char *info = NULL;
     int started = 0;
 
+    if (!prepare_output(r, &b)) return;
     if (!session && !(session = curl_easy_init())) {
         rc = CURLE_OUT_OF_MEMORY;
         goto done;
@@ -506,6 +578,7 @@ done:
     /* Remove every pointer to this request before releasing its storage. */
     if (session)
         curl_easy_reset(session);
+    if (!close_output(&b) && rc == CURLE_OK) rc = CURLE_WRITE_ERROR;
     http_status = status;
     new_connections = connects;
     total_us = (zlong)elapsed;
@@ -578,6 +651,7 @@ help(void)
          "  -r, --result ARRAY        Replace a declared ordinary associative array\n"
          "  -f, --fail                Return 22 for HTTP >=400; retain the response\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
+         "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
