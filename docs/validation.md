@@ -1,4 +1,4 @@
-# Validation of 0.5.0-dev
+# Validation of 0.6.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -67,6 +67,30 @@ regular files. Binary file contents are checked independently in Python.
 
 File output remains bounded by `--max-body`. Pipe/socket backpressure and
 filesystem durability are outside this milestone; see [the contract](file-output.md).
+
+## File-upload coverage
+
+`--data-fd` is tested for synchronous and concurrent HTTP/HTTPS, including a
+combined upload/download through file descriptors.
+
+- All 256 byte values, NUL and trailing newlines, default POST, explicit PUT and
+  PATCH, empty files, and offsets beyond EOF. Python independently checks bytes.
+- Captured start offsets without changing the caller's position; two jobs
+  reading independent ranges from the same descriptor despite later seeks,
+  closure and reuse of the original descriptor.
+- An 8 MiB-plus binary file-to-file HTTPS round trip with an empty result body.
+- File growth excluded from a captured range; truncation producing status/code
+  42, `error_kind=input`, and a specific premature-EOF diagnostic.
+- Private duplicates absent in executed children and released before collection,
+  on cancellation, drop, reset, unload, expired submission deadlines, TLS failure,
+  and invalid output setup. Read-only and read/write sources are exercised.
+- Invalid/write-only/nonregular sources and conflicting options rejected before
+  HTTP I/O; following literal POST and GET requests restoring ordinary behavior.
+- All 32 jobs accepting a 160 MiB sparse source without payload reservations;
+  reset closes the duplicates without uploading those files.
+
+Pipe/socket sources, filesystem blocking bounds and application-level upload
+acknowledgments remain outside the contract. See [file uploads](file-input.md).
 
 ## Concurrent HTTP coverage
 
@@ -183,7 +207,7 @@ startup and the relevant module/process startup. Server connection counts are
 reported separately. Run benchmarks without concurrent memory checks or other
 heavy work. This is a loopback overhead experiment, not a WAN throughput test.
 
-Pipe/socket streaming, request-body streaming, autonomous background transfers, arbitrary fork inheritance,
+Pipe/socket streaming, autonomous background transfers, arbitrary fork inheritance,
 automatic redirects, cookies, named sessions, HTTP/2/3-specific behavior,
 proxy integration and cross-platform ABI compatibility still need their own
 implementation and/or test coverage before being relied on.

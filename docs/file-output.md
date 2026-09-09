@@ -2,6 +2,7 @@
 
 Use `--output-fd FD` to write response bytes directly to an already-open writable
 regular file. It works with synchronous HTTP and `zcurl http submit`.
+It can be combined with [file uploads](file-input.md) using `--data-fd`.
 The module does not open a filename, truncate a file, seek, or create a temporary
 file; the caller chooses those actions through normal Zsh redirections.
 

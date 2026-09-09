@@ -50,7 +50,7 @@ are not supported. Only submission headers can repeat.
 
 | Operation | Behavior |
 | --- | --- |
-| `submit` | Accepts the existing HTTP request options, including methods, literal binary data, headers, CA file, `--fail`, timeouts, and `--max-body`. Copies request data and configuration, then attaches the request to the pool without network I/O. Returns `event=submitted`, `state=pending`. Its result array receives only this acknowledgment and is not remembered. |
+| `submit` | Accepts the HTTP request options, including methods, literal binary data, file input/output, headers, CA file, `--fail`, timeouts, and `--max-body`. Copies literal data and configuration, retains any file descriptors, then attaches the request to the pool without network I/O. Returns `event=submitted`, `state=pending`. Its result array receives only this acknowledgment and is not remembered. |
 | `poll` | Advances all pending HTTP jobs. `-t`/`--timeout` is 0..1000 ms, default 0. Returns one retained terminal handle as `event=ready`, or `event=idle` with an empty handle. It does not copy response payloads or consume a result. |
 | `wait` | Advances all pending jobs until the named request is terminal or the wait expires. `-t`/`--timeout` is 0..600000 ms, default 10000. Returns 0 with `event=ready` for the target, even if its transfer failed. A wait timeout returns 28 with `event=timeout`, `error_kind=wait-timeout`, and `code=0`, preserving the request. No response is consumed. |
 | `collect` | Copies a terminal response into global parameters and the optional array, returns its HTTP/transport status, then releases the handle. Returns `event=collected`, with `state=done` or `cancelled`. A pending request returns 2 and remains available. |
@@ -114,6 +114,11 @@ file. `body` stays empty; `bytes` reports written bytes. The owned duplicate is
 closed at transfer completion/cancellation, before collection. Partial file
 writes survive failures and result-publication errors. See [file output](file-output.md).
 
+With `submit --data-fd FD`, a private duplicate supplies a captured file range
+without retaining a request scalar or changing the caller's offset. Keep its
+contents stable until completion. It can be combined with file output, and its
+duplicate is also closed before collection. See [file uploads](file-input.md).
+
 ## Scheduling, deadlines and storage
 
 Each `poll` stops at a completion, its deadline, or 64 driver iterations.
@@ -146,8 +151,9 @@ collection, so waiting for it succeeds without erasing its original outcome.
 
 At most 32 handles, including completed and cancelled records, can coexist.
 Admission also reserves at most 128 MiB across jobs, counting each configured
-response-body limit (except for file output), 256 KiB for response headers, literal upload bytes,
-request header bytes, and copied URL/CA/method strings. Reservation lasts until
+response-body limit (except for file output), 256 KiB for response headers,
+literal upload bytes, request header bytes, and copied URL/CA/method strings.
+File uploads do not reserve their payload size. Reservation lasts until
 collection or drop, even after cancellation. This conservative accounting
 rejects work before response storage is needed. Lower `--max-body` when
 submitting many small requests. Rejection returns 2 with

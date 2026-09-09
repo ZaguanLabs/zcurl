@@ -6,11 +6,11 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.5.0-dev** is intended for trying in a project: methods, request
+Version **0.6.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
-explicit polling. Persistent WebSocket handles provide queued sends and
+explicit polling, with file-backed uploads and downloads. Persistent WebSocket handles provide queued sends and
 incremental receive through bounded polling. There is no autonomous background worker.
 
 ## Build and load
@@ -101,6 +101,26 @@ keep secret-bearing calls out of diagnostic traces.
 See [examples/api-client.zsh](examples/api-client.zsh) for a runnable helper
 that writes into its caller's result array through Zsh's dynamic scope.
 
+## Upload directly from files
+
+```zsh
+typeset -A response
+integer input_fd
+exec {input_fd}<payload.bin || return
+{
+    zcurl -r response --request PUT --data-fd "$input_fd" \
+        --header 'Content-Type: application/octet-stream' -- "$url"
+} always {
+    exec {input_fd}<&-
+}
+```
+
+`--data-fd` accepts a readable regular file for synchronous or concurrent HTTP.
+It captures the range from the current offset to EOF without moving the caller's
+offset or copying the file into a scalar. It implies POST unless a method is
+specified, and can be combined with `--output-fd`. Keep the file contents stable
+until completion. See [file uploads](docs/file-input.md) for ownership and errors.
+
 ## Write responses directly to files
 
 ```zsh
@@ -180,6 +200,7 @@ zcurl --reset
 | `-I`, `--head` | HEAD semantics, with no response body |
 | `-H`, `--header FIELD` | One request header; may be repeated |
 | `-d`, `--data BYTES` | Literal request body |
+| `--data-fd FD` | Upload the captured remaining range of an open readable regular file |
 | `-f`, `--fail` | Return status 22 for HTTP >=400, retaining the body |
 | `-c`, `--cacert FILE` | PEM trust file, with hostname verification still enabled |
 | `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
@@ -200,6 +221,7 @@ in libcurl. Semicolon syntax for empty headers is not implemented.
 
 `--head` and `--request HEAD` use libcurl's HEAD behavior, not just a changed
 method string. HEAD cannot be combined with data or a different method.
+`--data` and `--data-fd` are mutually exclusive.
 For ordinary HTTP requests, only HTTP/HTTPS are permitted; a URL without a
 scheme defaults to HTTPS.
 Redirects are returned to the caller and are not followed. There is no
@@ -219,7 +241,7 @@ requests and module unload.
 | `http_status` | HTTP status; zero if none was received |
 | `code` | libcurl result; zero on transfer success; -1 if no transfer was attempted |
 | `status` | zcurl's shell return status |
-| `error_kind` | `none`, `usage`, `transport`, `http`, `body-limit`, `header-limit`, `output`, `memory`, or `result` |
+| `error_kind` | `none`, `usage`, `transport`, `http`, `body-limit`, `header-limit`, `input`, `output`, `memory`, or `result` |
 | `error` | Diagnostic text; empty on success |
 | `complete` | 1 if the transfer completed successfully, even for an HTTP error response |
 | `bytes` | Raw body bytes stored, or successfully written with `--output-fd` |
@@ -232,7 +254,8 @@ Without `--fail`, a completed HTTP 404 returns zero. With `--fail`, it returns
 22, with `code=0`, `http_status=404`, `complete=1`, and the response body intact.
 A timeout returns 28, with `code=28` and `complete=0`. Body/header callback
 limits return 23 with a specific `error_kind`. Native usage/result-publication
-errors return 2. The shell may apply its own signal termination semantics.
+errors return 2. File read failures or premature EOF return 42 with
+`error_kind=input`. The shell may apply its own signal termination semantics.
 
 Normal invocations clear the global result first, including invalid calls and
 `--help`, `--version`, and `--reset`. Once a valid `--result ARRAY` option has

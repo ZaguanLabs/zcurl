@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define ZCURL_VERSION "0.5.0-dev"
+#define ZCURL_VERSION "0.6.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -36,11 +36,17 @@ struct buffer {
     int streaming, output_fd, output_errno;
 };
 
+struct http_input {
+    int active, fd, error, truncated;
+    off_t start;
+    curl_off_t length, offset;
+};
+
 struct request {
     char *url, *ca, *method, *data, *result;
     size_t data_len;
     long timeout, connect_timeout, max_body;
-    int fail_http, head, has_data, has_output, output_fd;
+    int fail_http, head, has_data, has_input, input_fd, has_output, output_fd;
     struct curl_slist *headers;
     size_t header_bytes;
 };
@@ -128,6 +134,93 @@ set_error(const char *kind, const char *message, int status)
     replace_text(&error_kind, kind, strlen(kind));
     replace_text(&error_text, message, strlen(message));
     return_status = status;
+}
+
+/* Capture a finite range, not file contents. pread keeps every request's
+ * cursor independent of the caller and other jobs using the same descriptor. */
+static int
+prepare_input(struct request *r, struct http_input *input)
+{
+    struct stat st;
+    off_t start, length;
+    int flags, fd;
+    if (!r->has_input) return 1;
+    flags = fcntl(r->input_fd, F_GETFL);
+    if (flags < 0 || ((flags & O_ACCMODE) != O_RDONLY && (flags & O_ACCMODE) != O_RDWR) ||
+        fstat(r->input_fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        (start = lseek(r->input_fd, 0, SEEK_CUR)) < 0) {
+        set_error("usage", "--data-fd requires an open readable regular-file descriptor", 2);
+        return 0;
+    }
+    length = st.st_size > start ? st.st_size - start : 0;
+    input->length = (curl_off_t)length;
+    if (input->length < 0 || (uintmax_t)input->length != (uintmax_t)length) {
+        set_error("usage", "input file range exceeds libcurl's supported size", 2);
+        return 0;
+    }
+    fd = fcntl(r->input_fd, F_DUPFD_CLOEXEC, 10);
+    if (fd < 0) {
+        set_error("input", "could not duplicate input descriptor", 2);
+        return 0;
+    }
+    addmodulefd(fd, FDT_MODULE);
+    input->active = 1;
+    input->fd = fd;
+    input->start = start;
+    return 1;
+}
+
+static void
+close_input(struct http_input *input)
+{
+    if (input->active && input->fd >= 0) {
+        int fd = input->fd;
+        input->fd = -1;
+        zclose(fd);
+    }
+}
+
+static size_t
+read_input(char *data, size_t size, size_t count, void *context)
+{
+    struct http_input *input = context;
+    curl_off_t remaining = input->length - input->offset;
+    size_t n;
+    ssize_t got;
+    if (size && count > SIZE_MAX / size) {
+        input->error = EOVERFLOW;
+        return CURL_READFUNC_ABORT;
+    }
+    n = size * count;
+    if ((uintmax_t)n > (uintmax_t)remaining) n = (size_t)remaining;
+    if (n > SSIZE_MAX) n = SSIZE_MAX;
+    if (!n) return 0;
+    do {
+        got = pread(input->fd, data, n, input->start + (off_t)input->offset);
+    } while (got < 0 && errno == EINTR);
+    if (got <= 0) {
+        if (got < 0) input->error = errno;
+        else input->truncated = 1;
+        return CURL_READFUNC_ABORT;
+    }
+    input->offset += (curl_off_t)got;
+    return (size_t)got;
+}
+
+static int
+seek_input(void *context, curl_off_t offset, int origin)
+{
+    struct http_input *input = context;
+    curl_off_t base;
+    switch (origin) {
+    case SEEK_SET: base = 0; break;
+    case SEEK_CUR: base = input->offset; break;
+    case SEEK_END: base = input->length; break;
+    default: return CURL_SEEKFUNC_FAIL;
+    }
+    if (offset < -base || offset > input->length - base) return CURL_SEEKFUNC_FAIL;
+    input->offset = base + offset;
+    return CURL_SEEKFUNC_OK;
 }
 
 /* The duplicate shares the caller's file offset, but has its own lifetime.
@@ -284,7 +377,7 @@ add_header(struct request *r, const char *value)
 }
 
 enum option_id { CA, TIMEOUT, CONNECT_TIMEOUT, METHOD, HEADER, DATA, RESULT,
-                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD };
+                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD };
 struct option_spec { const char *short_name, *long_name; enum option_id id; int value; };
 static const struct option_spec option_specs[] = {
     {"-c", "--cacert", CA, 1},
@@ -298,6 +391,7 @@ static const struct option_spec option_specs[] = {
     {"-f", "--fail", FAIL_HTTP, 0},
     {"-I", "--head", HEAD, 0},
     {NULL, "--output-fd", OUTPUT_FD, 1},
+    {NULL, "--data-fd", DATA_FD, 1},
 };
 
 static int
@@ -383,6 +477,13 @@ parse_request(char **args, struct request *r)
             break;
         case FAIL_HTTP: r->fail_http = 1; break;
         case HEAD: r->head = 1; break;
+        case DATA_FD: {
+            long fd;
+            if (!decimal(value, 0, INT_MAX, &fd)) goto invalid;
+            r->has_input = 1;
+            r->input_fd = (int)fd;
+            break;
+        }
         case OUTPUT_FD: {
             long fd;
             if (!decimal(value, 0, INT_MAX, &fd)) goto invalid;
@@ -399,7 +500,11 @@ parse_request(char **args, struct request *r)
     }
     if (r->method && !strcmp(r->method, "HEAD"))
         r->head = 1;
-    if (r->head && (r->has_data || (r->method && strcmp(r->method, "HEAD")))) {
+    if (r->has_data && r->has_input) {
+        set_error("usage", "--data and --data-fd cannot be combined", 2);
+        return 0;
+    }
+    if (r->head && (r->has_data || r->has_input || (r->method && strcmp(r->method, "HEAD")))) {
         set_error("usage", "HEAD cannot be combined with data or a different method", 2);
         return 0;
     }
@@ -468,11 +573,11 @@ drive_request(char *diagnostic, int *started)
     return rc;
 }
 
-/* libcurl copies string options. Persistent uploads need their own byte copy;
+/* libcurl copies string options. Persistent literal bodies need their own copy;
  * header lists and callback storage remain owned by the caller. */
 static CURLcode
 configure_http(CURL *easy, struct request *r, struct buffer *b,
-               struct buffer *h, char *diagnostic, int persistent)
+               struct buffer *h, struct http_input *input, char *diagnostic, int persistent)
 {
     CURLcode rc;
 #define SET(option, value) do { \
@@ -500,7 +605,14 @@ configure_http(CURL *easy, struct request *r, struct buffer *b,
     SET(CURLOPT_HEADEROPT, (long)CURLHEADER_SEPARATE);
     if (r->ca)
         SET(CURLOPT_CAINFO, r->ca);
-    if (r->has_data || (r->method && !strcmp(r->method, "POST"))) {
+    if (r->has_input) {
+        SET(CURLOPT_POST, 1L);
+        SET(CURLOPT_POSTFIELDSIZE_LARGE, input->length);
+        SET(CURLOPT_READFUNCTION, read_input);
+        SET(CURLOPT_READDATA, input);
+        SET(CURLOPT_SEEKFUNCTION, seek_input);
+        SET(CURLOPT_SEEKDATA, input);
+    } else if (r->has_data || (r->method && !strcmp(r->method, "POST"))) {
         SET(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)r->data_len);
         SET(persistent ? CURLOPT_COPYPOSTFIELDS : CURLOPT_POSTFIELDS, r->has_data ? r->data : "");
     }
@@ -514,7 +626,7 @@ configure_http(CURL *easy, struct request *r, struct buffer *b,
 }
 
 static void
-http_result(struct buffer *b, struct buffer *h, CURLcode rc,
+http_result(struct buffer *b, struct buffer *h, struct http_input *input, CURLcode rc,
             const char *diagnostic, int fail_http)
 {
     replace_text(&body, b->data ? b->data : "", b->data ? b->len : 0);
@@ -529,6 +641,9 @@ http_result(struct buffer *b, struct buffer *h, CURLcode rc,
         set_error("header-limit", "response headers exceed 256 KiB", (int)rc);
     else if (b->failure == BUFFER_OUTPUT)
         set_error("output", strerror(b->output_errno), (int)rc);
+    else if (input->error || input->truncated)
+        set_error("input", input->truncated ? "input file ended before its captured upload length" :
+                  strerror(input->error), (int)rc);
     else if (b->failure == BUFFER_MEMORY || h->failure == BUFFER_MEMORY || rc == CURLE_OUT_OF_MEMORY)
         set_error("memory", "could not allocate transfer storage", (int)rc);
     else if (rc != CURLE_OK)
@@ -542,6 +657,7 @@ perform_request(struct request *r)
 {
     struct buffer b = {.limit = (size_t)r->max_body};
     struct buffer h = {.limit = HEADER_LIMIT};
+    struct http_input input = {0};
     char diagnostic[CURL_ERROR_SIZE] = {0};
     long status = 0, connects = 0;
     curl_off_t elapsed = 0;
@@ -549,7 +665,8 @@ perform_request(struct request *r)
     char *info = NULL;
     int started = 0;
 
-    if (!prepare_output(r, &b)) return;
+    if (!prepare_input(r, &input)) return;
+    if (!prepare_output(r, &b)) { close_input(&input); return; }
     if (!session && !(session = curl_easy_init())) {
         rc = CURLE_OUT_OF_MEMORY;
         goto done;
@@ -560,7 +677,7 @@ perform_request(struct request *r)
     }
     /* Reset per-request options; preserve the connection, DNS and TLS caches. */
     curl_easy_reset(session);
-    rc = configure_http(session, r, &b, &h, diagnostic, 0);
+    rc = configure_http(session, r, &b, &h, &input, diagnostic, 0);
     if (rc != CURLE_OK) goto done;
 
     rc = drive_request(diagnostic, &started);
@@ -578,11 +695,12 @@ done:
     /* Remove every pointer to this request before releasing its storage. */
     if (session)
         curl_easy_reset(session);
+    close_input(&input);
     if (!close_output(&b) && rc == CURLE_OK) rc = CURLE_WRITE_ERROR;
     http_status = status;
     new_connections = connects;
     total_us = (zlong)elapsed;
-    http_result(&b, &h, rc, diagnostic, r->fail_http);
+    http_result(&b, &h, &input, rc, diagnostic, r->fail_http);
     free(b.data);
     free(h.data);
 }
@@ -648,6 +766,7 @@ help(void)
          "  -I, --head                HEAD request, without a response body\n"
          "  -H, --header FIELD        Request header (repeatable)\n"
          "  -d, --data BYTES          Literal request body; preserves NUL bytes\n"
+         "      --data-fd FD          Upload remaining bytes from an open readable regular file\n"
          "  -r, --result ARRAY        Replace a declared ordinary associative array\n"
          "  -f, --fail                Return 22 for HTTP >=400; retain the response\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"

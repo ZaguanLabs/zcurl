@@ -310,6 +310,55 @@ def streaming_test(env, plain, temp):
     print('PASS: direct file bytes, partial write failures and descriptor ownership independently verified')
 
 
+def upload_test(env, plain, temp):
+    before = plain.request_count
+    print(run(env, LOAD + '''
+        setopt errexit
+        typeset -A response
+        exec {output}>"$ZCURL_TEST_TMP/upload-invalid.bin"
+        exec {device}</dev/null
+        exec {directory}<"$ZCURL_TEST_TMP"
+        exec {input}<"$ZCURL_TEST_CA"
+        for fd in "$output" "$device" "$directory" -1 2147483647 '1+1'; do
+            zcurl -r response --data-fd "$fd" -- "$ZCURL_TEST_HTTP/echo" && exit 1
+            [[ $response[status] == 2 && $response[code] == -1 && $response[error_kind] == usage ]] || exit 2
+            zcurl http submit invalid -r response --data-fd "$fd" -- "$ZCURL_TEST_HTTP/echo" && exit 3
+            [[ $response[status] == 2 && $response[code] == -1 ]] || exit 4
+        done
+        for option in --head --data --data-fd; do
+            args=( "$option" )
+            [[ $option == --head ]] || args+=( "$input" )
+            for mode in sync async; do
+                cmd=( zcurl -r response )
+                [[ $mode == sync ]] || cmd=( zcurl http submit invalid -r response )
+                "$cmd[@]" --data-fd "$input" "$args[@]" -- "$ZCURL_TEST_HTTP/echo" && exit 5
+                [[ $response[status] == 2 && $response[code] == -1 ]] || exit 6
+            done
+        done
+        zcurl --data-fd 0 -- "$ZCURL_TEST_HTTP/echo" </dev/null && exit 7
+        # Pipe sources are rejected too, without reading or starting HTTP.
+        print -r -- payload | zcurl -r response --data-fd 0 -- "$ZCURL_TEST_HTTP/echo" && exit 8
+        [[ $response[status] == 2 && $response[error_kind] == usage && $response[code] == -1 ]] || exit 9
+        print -r -- 'PASS: invalid/nonregular input descriptors and conflicting options rejected before HTTP'
+    '''))
+    assert plain.request_count == before, 'invalid upload caused HTTP I/O'
+    binary = bytes(range(256)) + b'\n\n'
+    (temp / 'upload-source.bin').write_bytes(b'prefix' + binary)
+    (temp / 'upload-empty.bin').write_bytes(b'')
+    large = bytes(range(256)) * 32768 + b'\n'
+    (temp / 'upload-large.bin').write_bytes(large)
+    with (temp / 'upload-sparse.bin').open('wb') as source:
+        source.truncate(160 * 1024 * 1024)
+    print(run(env, (ROOT / 'tests' / 'uploads.zsh').read_text()))
+    assert (temp / 'upload-sync.bin').read_bytes() == binary
+    assert (temp / 'upload-first.bin').read_bytes() == binary
+    assert (temp / 'upload-second.bin').read_bytes() == binary[1:]
+    assert (temp / 'upload-large-echo.bin').read_bytes() == large
+    assert (temp / 'upload-source.bin').read_bytes() == b'prefix' + binary
+    assert (temp / 'upload-cleanup.bin').read_bytes() == b''
+    print('PASS: binary upload ranges and large file-to-file HTTPS round trip independently verified')
+
+
 def interrupt_test(env, plain):
     plain.slow_started.clear()
     pid, fd = pty.fork()
@@ -478,6 +527,7 @@ if __name__ == "__main__":
         api_test(env, plain, temp)
         loader_test(env)
         streaming_test(env, plain, temp)
+        upload_test(env, plain, temp)
         before = plain.request_count
         run(env, LOAD + '''
             setopt errexit

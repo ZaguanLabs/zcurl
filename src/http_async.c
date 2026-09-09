@@ -10,6 +10,7 @@ struct http_job {
     CURL *easy;
     struct curl_slist *request_headers;
     struct buffer body, headers;
+    struct http_input input;
     char diagnostic[CURL_ERROR_SIZE];
     size_t reserved;
     int attached, done, cancelled, started, fail_http;
@@ -40,6 +41,7 @@ http_destroy(struct http_job *j)
     }
     if (j->attached) curl_multi_remove_handle(http_pool, j->easy);
     if (j->easy) curl_easy_cleanup(j->easy);
+    close_input(&j->input);
     close_output(&j->body);
     curl_slist_free_all(j->request_headers);
     free(j->body.data);
@@ -69,6 +71,7 @@ http_pool_fail(CURLMcode mc)
         j->attached = 0;
         j->done = 1;
         j->code = CURLE_FAILED_INIT;
+        close_input(&j->input);
         close_output(&j->body);
         snprintf(j->diagnostic, sizeof(j->diagnostic), "libcurl multi: %s", curl_multi_strerror(mc));
     }
@@ -89,6 +92,7 @@ http_finish(struct http_job *j, CURLcode code)
     }
     j->attached = 0;
     j->done = 1;
+    close_input(&j->input);
     if (!close_output(&j->body) && code == CURLE_OK) code = CURLE_WRITE_ERROR;
     j->code = code;
     return 1;
@@ -138,11 +142,11 @@ http_submit(const char *name, struct request *r)
         http_destroy(j);
         goto memory;
     }
-    if (!prepare_output(r, &j->body)) {
+    if (!prepare_input(r, &j->input) || !prepare_output(r, &j->body)) {
         http_destroy(j);
         return NULL;
     }
-    rc = configure_http(j->easy, r, &j->body, &j->headers, j->diagnostic, 1);
+    rc = configure_http(j->easy, r, &j->body, &j->headers, &j->input, j->diagnostic, 1);
     if (rc != CURLE_OK) {
         curl_code = rc;
         set_error(rc == CURLE_OUT_OF_MEMORY ? "memory" : "transport", curl_easy_strerror(rc), (int)rc);
@@ -258,7 +262,7 @@ http_collect(struct http_job *j)
     http_status = status;
     new_connections = connects;
     total_us = (zlong)elapsed;
-    http_result(&j->body, &j->headers, j->code, j->diagnostic, j->fail_http);
+    http_result(&j->body, &j->headers, &j->input, j->code, j->diagnostic, j->fail_http);
     if (j->cancelled) set_error("cancelled", "HTTP request cancelled", 42);
     http_snapshot(j, "collected");
 }
