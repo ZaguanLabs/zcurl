@@ -1,4 +1,4 @@
-# Validation of 0.3.0-dev
+# Validation of 0.4.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.7. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -46,6 +46,36 @@ The synchronous multi driver queues Zsh signals around libcurl calls and
 delivers them between calls. Tests establish these specific behaviors, not
 every resolver, signal trap, job-control combination, or backend behavior.
 
+## Concurrent HTTP coverage
+
+The 0.4.0-dev implementation and existing transports pass `make test`,
+`make memcheck`, and a C syntax check with `-Wall -Wextra -Werror` on the
+environment above. Tests run in fresh shells and include:
+
+- HTTP and verified HTTPS response barriers that require two requests to arrive
+  before either can complete, establishing overlap without a speed threshold.
+- Submission and cancellation before polling causing no server-observed I/O;
+  binary upload, methods, headers, URL and CA configuration surviving the
+  submitting function's scope; exact bytes checked independently in Python.
+- Connection reuse after collection, retained snapshots, and dynamic-scope
+  collection under adverse shell options.
+- A fast response completing while a partial response is held by a server gate;
+  cancelling that partial response retains its bytes and status. A WS handle
+  with the same name remains usable.
+- Independent HTTP failure, TLS trust failure, timeout, truncation and response
+  limits; submission deadlines expiring before the first network step.
+- Pending/duplicate/unknown handles, rejected destinations preserving results,
+  repeated ready events and continued progress with an uncollected completion.
+- The 32-handle and 128 MiB reservation limits, rejection before response
+  allocation, release on collection/drop, and reset/unload of outstanding jobs.
+- PTY Ctrl-C preserving pending jobs; trap attempts to cancel/reenter/unload
+  during polling being rejected; a trap changing a poll destination without
+  losing the completed response.
+
+This is explicit cooperative HTTP concurrency. Autonomous background progress,
+ZLE scheduling, cross-platform behavior and other libcurl versions remain outside
+the validated scope. See [the contract](concurrency.md).
+
 ## WebSocket coverage
 
 `make test` and `make memcheck` also run a Python standard-library RFC 6455
@@ -58,7 +88,15 @@ memory-check output is recorded locally in `build/websocket-valgrind.log`.
   rejected upgrades, scheme restrictions and handshake deadlines.
 - All 256 byte values, NUL/trailing newlines, empty frames, and a 4 MB frame
   round-trip through incremental receive and partial queued sends. The fixture
-  delays reads to exercise sender backpressure and checks client masking.
+  checks client masking and the send work bound for a zero-timeout poll.
+- An 8 MiB frame saturates a peer whose receive window is bounded and whose
+  reads wait for an explicit HTTP release. The test requires a partial send
+  with stalled queue progress, checks that each 100 ms poll returns within a
+  generous 2 s scheduling allowance, and verifies that retained frame storage
+  still counts against queue admission. Another WebSocket and HTTP remain
+  usable during the stall. Releasing the peer delivers the exact payload,
+  permits a new send, and allows a graceful close. This checks WS on loopback;
+  it does not establish bounds for every TLS backend or network condition.
 - Text fragmented across UTF-8 character boundaries, interleaved PING/PONG,
   explicit unsolicited PONG, and automatically queued matching PONG payloads.
 - One-byte receive chunks and offsets from a frame whose payload arrives in
@@ -119,7 +157,7 @@ startup and the relevant module/process startup. Server connection counts are
 reported separately. Run benchmarks without concurrent memory checks or other
 heavy work. This is a loopback overhead experiment, not a WAN throughput test.
 
-File/descriptor streaming, concurrent transfers, arbitrary fork inheritance,
+File/descriptor streaming, autonomous background transfers, arbitrary fork inheritance,
 automatic redirects, cookies, named sessions, HTTP/2/3-specific behavior,
 proxy integration and cross-platform ABI compatibility still need their own
 implementation and/or test coverage before being relied on.

@@ -71,7 +71,7 @@ ws_valid_close(long code)
 static void
 ws_event_set(const char *event)
 {
-    replace_text(&ws_event, event, strlen(event));
+    replace_text(&event_text, event, strlen(event));
 }
 
 static void
@@ -135,8 +135,8 @@ static void
 ws_snapshot(struct websocket *w)
 {
     const char *state = w->failure ? "error" : !w->easy ? "closed" : w->closing ? "closing" : "open";
-    replace_text(&ws_handle, w->name, strlen(w->name));
-    replace_text(&ws_state, state, strlen(state));
+    replace_text(&handle_text, w->name, strlen(w->name));
+    replace_text(&state_text, state, strlen(state));
     ws_queued_bytes = (zlong)w->queue_bytes;
     ws_queued_frames = (zlong)w->queue_frames;
     ws_close_code = w->close_code;
@@ -228,18 +228,10 @@ ws_flush(struct websocket *w)
     return sent != 0;
 }
 
-static int64_t
-ws_now(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
 static CURLcode
 ws_handshake(struct websocket *w, long timeout)
 {
-    int64_t deadline = ws_now() + timeout;
+    int64_t deadline = monotonic_ms() + timeout;
     CURLMcode mc = curl_multi_add_handle(w->multi, w->easy);
     if (mc != CURLM_OK) return CURLE_FAILED_INIT;
     w->attached = 1;
@@ -251,13 +243,13 @@ ws_handshake(struct websocket *w, long timeout)
         stop = interrupted();
         queue_signals();
         if (stop) return CURLE_ABORTED_BY_CALLBACK;
-        if (ws_now() >= deadline) return CURLE_OPERATION_TIMEDOUT;
+        if (monotonic_ms() >= deadline) return CURLE_OPERATION_TIMEDOUT;
         mc = curl_multi_perform(w->multi, &running);
         if (mc != CURLM_OK) return CURLE_FAILED_INIT;
         while ((msg = curl_multi_info_read(w->multi, &remaining)))
             if (msg->msg == CURLMSG_DONE) return msg->data.result;
         if (!running) return CURLE_FAILED_INIT;
-        wait_ms = deadline - ws_now();
+        wait_ms = deadline - monotonic_ms();
         if (wait_ms <= 0) return CURLE_OPERATION_TIMEDOUT;
         mc = curl_multi_poll(w->multi, NULL, 0, wait_ms > 100 ? 100 : (int)wait_ms, NULL);
         if (mc != CURLM_OK) return CURLE_FAILED_INIT;
@@ -434,7 +426,7 @@ protocol:
 static void
 ws_poll(struct websocket *w, long timeout, size_t chunk, int receive_only)
 {
-    int64_t deadline = ws_now() + timeout;
+    int64_t deadline = monotonic_ms() + timeout;
     int steps;
     ws_event_set(w->easy ? "idle" : "closed");
     for (steps = 0; steps < WS_STEPS && w->easy; ++steps) {
@@ -459,7 +451,7 @@ ws_poll(struct websocket *w, long timeout, size_t chunk, int receive_only)
         if (received == 1) return;
         if (received == 2) moved = 1;
         if (w->failure || receive_only) return;
-        remaining = deadline - ws_now();
+        remaining = deadline - monotonic_ms();
         if (remaining <= 0) return;
         if (moved) continue;
         if (curl_easy_getinfo(w->easy, CURLINFO_ACTIVESOCKET, &socket) != CURLE_OK || socket == CURL_SOCKET_BAD) {
@@ -547,7 +539,7 @@ websocket_command(char **args)
         if (!strcmp(p->name, name)) w = p;
         count++;
     }
-    replace_text(&ws_handle, name, strlen(name));
+    replace_text(&handle_text, name, strlen(name));
     if (operation == WS_OPEN) {
         if (w || count >= WS_HANDLES || !r.url ||
             (strncasecmp(r.url, "ws://", 5) && strncasecmp(r.url, "wss://", 6))) goto usage;
@@ -560,8 +552,8 @@ websocket_command(char **args)
         ws_snapshot(w);
         ws_destroy(w); w = NULL;
         clear_result();
-        replace_text(&ws_handle, name, strlen(name));
-        replace_text(&ws_state, "closed", 6);
+        replace_text(&handle_text, name, strlen(name));
+        replace_text(&state_text, "closed", 6);
         ws_event_set("dropped"); curl_code = 0; complete = 1;
         goto done;
     }
@@ -610,6 +602,6 @@ usage:
     if (!return_status) set_error("usage", "invalid WebSocket operation, handle, option, or payload; see docs/websocket.md", 2);
 done:
     if (w) ws_snapshot(w);
-    if (r.result) publish_result(r.result, 1);
+    if (r.result) publish_result(r.result, RESULT_WS);
     curl_slist_free_all(r.headers);
 }

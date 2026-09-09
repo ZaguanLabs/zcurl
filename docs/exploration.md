@@ -1,10 +1,12 @@
 # Where to push next
 
-Updated for 0.3.0-dev. Persistent WS/WSS handles now have queued sends and
+Updated for 0.4.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
-Zsh's queued signals between network steps. HTTP still exposes only one request
-at a time; concurrent HTTP/background APIs are not implemented.
+Zsh's queued signals between network steps. Named concurrent HTTP requests now
+share a separate multi pool, with submission, polling, collection and cancellation;
+see [the concurrency contract](concurrency.md). Autonomous background work is
+not implemented.
 
 The working path is `Zsh builtin → libcurl → TLS backend → network`. The C
 module is the binding. A separate executable is an architectural option,
@@ -25,10 +27,11 @@ request composition and results, with libcurl owning network protocols.
 | Persistent libcurl worker plus Zsh client | Independent network progress and process isolation; session reuse across commands | Framing, cancellation, backpressure, result ownership, worker lifecycle |
 | External curl invocation | Mature existing interface; excellent for known batches | Separate invocations do not retain one shared connection pool |
 
-libcurl's multi interface is a promising next experiment: expose explicit
-submit/poll/wait/collect operations first, then determine what integration
-with interactive Zsh can reliably provide. Those operation names describe
-an idea, not implemented commands.
+The explicit `zcurl http submit/poll/collect/cancel/drop/info` API now exercises
+libcurl's multi interface with retained request ownership and bounded storage.
+Local HTTP and HTTPS barriers demonstrate overlapping requests; cancellation,
+partial results, TLS pool reuse and PTY signals have regression coverage.
+Interactive integration and an optional convenience wait operation remain open.
 
 `zle -F` is a useful readiness hook while the line editor is active. The local
 Zsh manual explicitly makes the caller responsible when ZLE is inactive.
@@ -60,16 +63,16 @@ requests turn out to be the main need.
    does not make shared TLS sockets safe. Unload/reload, exec descriptor
    inheritance, signal traps, reentry and module feature toggles need further
    stress testing.
-5. **Concurrency.** Demonstrate concurrent local slow endpoints with multi,
-   cancellation and bounded storage. Separately demonstrate responsive typing
-   and correct timers while the editor is active, then behavior while it is not.
+5. **Concurrency.** Explicit overlapping transfers, cancellation and bounded
+   storage are implemented. Next, measure real consuming workloads and determine
+   whether they need scheduling independent of shell calls. Responsive typing
+   and correct timers while ZLE is active and inactive still need separate work.
 6. **Packaging.** Test multiple Zsh builds and distributions, sanitizers and
    dependency combinations before promising a portable native module.
 
-The next concurrency milestone is extending the existing multi driver to two
-overlapping transfers and explicit collection. Whether to follow that with
-ZLE integration or a persistent worker depends on the consuming project's
-actual request pattern.
+The next concurrency milestone is integration feedback on deadlines, collection
+and admission limits. Whether to follow that with ZLE integration or a persistent
+worker depends on the consuming project's actual request pattern.
 
 ## Sources used
 
@@ -96,5 +99,5 @@ Primary libcurl references:
 - [Header list lifetime and forwarding behavior](https://curl.se/libcurl/c/CURLOPT_HTTPHEADER.html)
 
 The architecture comparisons and proposed next steps above are engineering
-inferences; only the synchronous implementation and reported tests have been
-demonstrated here.
+inferences; the synchronous HTTP, explicitly polled concurrent HTTP, WebSocket
+implementations and reported tests have been demonstrated here.

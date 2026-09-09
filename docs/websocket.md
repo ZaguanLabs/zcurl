@@ -50,9 +50,10 @@ caller's responsibility; the raw handshake headers are in the open result.
 
 ## Events and results
 
-WS snapshots extend the 13 HTTP result fields with the fields below. HTTP
-snapshots retain their original shape. Global WS fields clear on every ordinary
-invocation, including HTTP calls; use a snapshot to retain an event.
+WS snapshots extend the 13 synchronous HTTP result fields with the fields below.
+Synchronous HTTP snapshots retain their original shape. Concurrent HTTP snapshots
+also use `handle`, `event` and `state`; see [their contract](concurrency.md).
+Global fields clear on every ordinary invocation; use a snapshot to retain an event.
 
 | Field | Meaning |
 | --- | --- |

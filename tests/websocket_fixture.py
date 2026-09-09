@@ -1,6 +1,7 @@
 """Small RFC 6455 wire fixture, independent of libcurl and third-party packages."""
 import base64
 import hashlib
+import socket
 import struct
 import time
 
@@ -57,6 +58,13 @@ def serve(h):
         h.wfile.write(frame(1, b"a\xe2", False) + frame(9, b"heartbeat\0") + frame(0, b"\x82\xac\n\n"))
     if h.path == "/ws-backpressure":
         time.sleep(0.3)
+    if h.path == "/ws-stalled":
+        # Bound the receive window and do not consume frames until the client
+        # releases us over HTTP. No sleep can accidentally hide backpressure.
+        h.connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+        h.server.ws_release.clear()
+        h.wfile.write(frame(1, b"ready"))
+        assert h.server.ws_release.wait(20), "stalled peer was never released"
     fragmented = None
     message = bytearray()
     while True:

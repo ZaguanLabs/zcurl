@@ -8,7 +8,7 @@
 #include <poll.h>
 #include <time.h>
 
-#define ZCURL_VERSION "0.3.0-dev"
+#define ZCURL_VERSION "0.4.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -21,7 +21,7 @@ static int initialized, busy;
 static char *body, *headers, *error_text, *error_kind, *effective_url, *content_type;
 static zlong http_status, curl_code, new_connections, total_us;
 static zlong return_status, complete, received_bytes;
-static char *ws_handle, *ws_event, *ws_state, *ws_type, *ws_close_reason;
+static char *handle_text, *event_text, *state_text, *ws_type, *ws_close_reason;
 static zlong ws_offset, ws_bytesleft, ws_more, ws_message_end;
 static zlong ws_queued_bytes, ws_queued_frames, ws_close_code;
 
@@ -73,6 +73,14 @@ receive(char *data, size_t size, size_t count, void *context)
     return n;
 }
 
+static int64_t
+monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 static int
 interrupted(void)
 {
@@ -115,9 +123,9 @@ clear_result(void)
     http_status = new_connections = total_us = received_bytes = complete = 0;
     return_status = 0;
     curl_code = -1; /* No transfer has been attempted. */
-    replace_text(&ws_handle, "", 0);
-    replace_text(&ws_event, "", 0);
-    replace_text(&ws_state, "", 0);
+    replace_text(&handle_text, "", 0);
+    replace_text(&event_text, "", 0);
+    replace_text(&state_text, "", 0);
     replace_text(&ws_type, "", 0);
     replace_text(&ws_close_reason, "", 0);
     ws_offset = ws_bytesleft = ws_more = ws_message_end = 0;
@@ -391,6 +399,73 @@ drive_request(char *diagnostic, int *started)
     return rc;
 }
 
+/* libcurl copies string options. Persistent uploads need their own byte copy;
+ * header lists and callback storage remain owned by the caller. */
+static CURLcode
+configure_http(CURL *easy, struct request *r, struct buffer *b,
+               struct buffer *h, char *diagnostic, int persistent)
+{
+    CURLcode rc;
+#define SET(option, value) do { \
+    rc = curl_easy_setopt(easy, option, value); \
+    if (rc != CURLE_OK) return rc; \
+} while (0)
+    SET(CURLOPT_URL, r->url);
+    SET(CURLOPT_DEFAULT_PROTOCOL, "https");
+    SET(CURLOPT_PROTOCOLS_STR, "http,https");
+    SET(CURLOPT_REDIR_PROTOCOLS_STR, "https");
+    SET(CURLOPT_FOLLOWLOCATION, 0L);
+    SET(CURLOPT_SSL_VERIFYPEER, 1L);
+    SET(CURLOPT_SSL_VERIFYHOST, 2L);
+    SET(CURLOPT_NOSIGNAL, 1L);
+    SET(CURLOPT_TIMEOUT_MS, r->timeout);
+    SET(CURLOPT_CONNECTTIMEOUT_MS, r->connect_timeout);
+    SET(CURLOPT_ERRORBUFFER, diagnostic);
+    SET(CURLOPT_WRITEFUNCTION, receive);
+    SET(CURLOPT_WRITEDATA, b);
+    SET(CURLOPT_HEADERFUNCTION, receive);
+    SET(CURLOPT_HEADERDATA, h);
+    SET(CURLOPT_NOPROGRESS, persistent ? 1L : 0L);
+    SET(CURLOPT_XFERINFOFUNCTION, progress);
+    SET(CURLOPT_HTTPHEADER, r->headers);
+    SET(CURLOPT_HEADEROPT, (long)CURLHEADER_SEPARATE);
+    if (r->ca)
+        SET(CURLOPT_CAINFO, r->ca);
+    if (r->has_data || (r->method && !strcmp(r->method, "POST"))) {
+        SET(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)r->data_len);
+        SET(persistent ? CURLOPT_COPYPOSTFIELDS : CURLOPT_POSTFIELDS, r->has_data ? r->data : "");
+    }
+    if (r->head)
+        SET(CURLOPT_NOBODY, 1L);
+    else if (r->method)
+        SET(CURLOPT_CUSTOMREQUEST, r->method);
+
+    return CURLE_OK;
+#undef SET
+}
+
+static void
+http_result(struct buffer *b, struct buffer *h, CURLcode rc,
+            const char *diagnostic, int fail_http)
+{
+    replace_text(&body, b->data ? b->data : "", b->len);
+    replace_text(&headers, h->data ? h->data : "", h->len);
+    curl_code = rc;
+    received_bytes = (zlong)b->len;
+    complete = rc == CURLE_OK;
+    return_status = (int)rc;
+    if (b->failure == BUFFER_LIMIT)
+        set_error("body-limit", "response body exceeds --max-body", (int)rc);
+    else if (h->failure == BUFFER_LIMIT)
+        set_error("header-limit", "response headers exceed 256 KiB", (int)rc);
+    else if (b->failure == BUFFER_MEMORY || h->failure == BUFFER_MEMORY || rc == CURLE_OUT_OF_MEMORY)
+        set_error("memory", "could not allocate transfer storage", (int)rc);
+    else if (rc != CURLE_OK)
+        set_error("transport", diagnostic[0] ? diagnostic : curl_easy_strerror(rc), (int)rc);
+    else if (fail_http && http_status >= 400)
+        set_error("http", "HTTP response status is 400 or higher", 22);
+}
+
 static void
 perform_request(struct request *r)
 {
@@ -413,39 +488,8 @@ perform_request(struct request *r)
     }
     /* Reset per-request options; preserve the connection, DNS and TLS caches. */
     curl_easy_reset(session);
-#define SET(option, value) do { \
-    rc = curl_easy_setopt(session, option, value); \
-    if (rc != CURLE_OK) goto done; \
-} while (0)
-    SET(CURLOPT_URL, r->url);
-    SET(CURLOPT_DEFAULT_PROTOCOL, "https");
-    SET(CURLOPT_PROTOCOLS_STR, "http,https");
-    SET(CURLOPT_REDIR_PROTOCOLS_STR, "https");
-    SET(CURLOPT_FOLLOWLOCATION, 0L);
-    SET(CURLOPT_SSL_VERIFYPEER, 1L);
-    SET(CURLOPT_SSL_VERIFYHOST, 2L);
-    SET(CURLOPT_NOSIGNAL, 1L);
-    SET(CURLOPT_TIMEOUT_MS, r->timeout);
-    SET(CURLOPT_CONNECTTIMEOUT_MS, r->connect_timeout);
-    SET(CURLOPT_ERRORBUFFER, diagnostic);
-    SET(CURLOPT_WRITEFUNCTION, receive);
-    SET(CURLOPT_WRITEDATA, &b);
-    SET(CURLOPT_HEADERFUNCTION, receive);
-    SET(CURLOPT_HEADERDATA, &h);
-    SET(CURLOPT_NOPROGRESS, 0L);
-    SET(CURLOPT_XFERINFOFUNCTION, progress);
-    SET(CURLOPT_HTTPHEADER, r->headers);
-    SET(CURLOPT_HEADEROPT, (long)CURLHEADER_SEPARATE);
-    if (r->ca)
-        SET(CURLOPT_CAINFO, r->ca);
-    if (r->has_data || (r->method && !strcmp(r->method, "POST"))) {
-        SET(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)r->data_len);
-        SET(CURLOPT_POSTFIELDS, r->has_data ? r->data : "");
-    }
-    if (r->head)
-        SET(CURLOPT_NOBODY, 1L);
-    else if (r->method)
-        SET(CURLOPT_CUSTOMREQUEST, r->method);
+    rc = configure_http(session, r, &b, &h, diagnostic, 0);
+    if (rc != CURLE_OK) goto done;
 
     rc = drive_request(diagnostic, &started);
     if (!started)
@@ -462,28 +506,12 @@ done:
     /* Remove every pointer to this request before releasing its storage. */
     if (session)
         curl_easy_reset(session);
-    replace_text(&body, b.data ? b.data : "", b.len);
-    replace_text(&headers, h.data ? h.data : "", h.len);
     http_status = status;
-    curl_code = rc;
     new_connections = connects;
     total_us = (zlong)elapsed;
-    received_bytes = (zlong)b.len;
-    complete = rc == CURLE_OK;
-    return_status = (int)rc;
-    if (b.failure == BUFFER_LIMIT)
-        set_error("body-limit", "response body exceeds --max-body", (int)rc);
-    else if (h.failure == BUFFER_LIMIT)
-        set_error("header-limit", "response headers exceed 256 KiB", (int)rc);
-    else if (b.failure == BUFFER_MEMORY || h.failure == BUFFER_MEMORY || rc == CURLE_OUT_OF_MEMORY)
-        set_error("memory", "could not allocate transfer storage", (int)rc);
-    else if (rc != CURLE_OK)
-        set_error("transport", diagnostic[0] ? diagnostic : curl_easy_strerror(rc), (int)rc);
-    else if (r->fail_http && status >= 400)
-        set_error("http", "HTTP response status is 400 or higher", 22);
+    http_result(&b, &h, rc, diagnostic, r->fail_http);
     free(b.data);
     free(h.data);
-#undef SET
 }
 
 /* The same field table drives module parameters and caller-owned snapshots. */
@@ -495,24 +523,27 @@ static const struct result_field result_fields[] = {
     {"code", 1, &curl_code}, {"new_connections", 1, &new_connections},
     {"total_us", 1, &total_us}, {"status", 1, &return_status},
     {"complete", 1, &complete}, {"bytes", 1, &received_bytes},
-    {"handle", 0, &ws_handle}, {"event", 0, &ws_event},
-    {"state", 0, &ws_state}, {"frame_type", 0, &ws_type},
+    {"handle", 0, &handle_text}, {"event", 0, &event_text},
+    {"state", 0, &state_text}, {"frame_type", 0, &ws_type},
     {"offset", 1, &ws_offset}, {"bytesleft", 1, &ws_bytesleft},
     {"more", 1, &ws_more}, {"message_end", 1, &ws_message_end},
     {"queued_bytes", 1, &ws_queued_bytes}, {"queued_frames", 1, &ws_queued_frames},
     {"close_code", 1, &ws_close_code}, {"close_reason", 0, &ws_close_reason},
 };
 
-static void
-publish_result(char *name, int websocket)
+enum result_shape { RESULT_HTTP, RESULT_WS, RESULT_ASYNC };
+
+static int
+publish_result(char *name, enum result_shape shape)
 {
     char **values;
-    /* Preserve the original HTTP snapshot shape; WS extends those fields. */
-    size_t i, count = websocket ? ARRAY_SIZE(result_fields) : 13;
+    /* HTTP jobs share handle/event/state with WS, retaining both older shapes. */
+    size_t i, count = shape == RESULT_WS ? ARRAY_SIZE(result_fields) :
+                      shape == RESULT_ASYNC ? 16 : 13;
     /* A trap may have changed the destination during the transfer. */
     if (!result_parameter(name)) {
         set_error("result", "result array changed during the request; see zcurl_* parameters", 2);
-        return;
+        return 0;
     }
     values = zalloc((2 * count + 1) * sizeof(*values));
     for (i = 0; i < count; ++i) {
@@ -526,8 +557,11 @@ publish_result(char *name, int websocket)
             values[2 * i + 1] = ztrdup(*(char **)f->value ? *(char **)f->value : "");
     }
     values[2 * i] = NULL;
-    if (!sethparam(name, values))
+    if (!sethparam(name, values)) {
         set_error("result", "could not publish result array; see zcurl_* parameters", 2);
+        return 0;
+    }
+    return 1;
 }
 
 static void
@@ -548,6 +582,10 @@ help(void)
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
+         "zcurl http submit HANDLE [HTTP options] URL\n"
+         "zcurl http poll [-t MS] [-r ARRAY]\n"
+         "zcurl http collect|cancel|drop|info HANDLE [-r ARRAY]\n"
+         "  See docs/concurrency.md for scheduling, limits and result ownership.\n"
          "zcurl ws OP HANDLE [options] [URL]\n"
          "  OP: open, send, recv, poll, close, drop, info\n"
          "  See docs/websocket.md for options, events and connection lifecycle.\n"
@@ -556,6 +594,7 @@ help(void)
 }
 
 #include "websocket.c"
+#include "http_async.c"
 
 static int
 bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
@@ -577,6 +616,10 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
         websocket_command(args + 1);
         goto done;
     }
+    if (args[0] && (control = text_argument(args[0])) && !strcmp(control, "http")) {
+        http_command(args + 1);
+        goto done;
+    }
     if (args[0] && !args[1] && (control = text_argument(args[0]))) {
         if (!strcmp(control, "--help")) {
             help();
@@ -589,13 +632,14 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
         if (!strcmp(control, "--reset")) {
             close_session();
             websocket_cleanup();
+            http_cleanup();
             goto done;
         }
     }
     if (parse_request(args, &r))
         perform_request(&r);
     if (r.result)
-        publish_result(r.result, 0);
+        publish_result(r.result, RESULT_HTTP);
     if (!strcmp(error_kind, "usage"))
         zwarnnam(name, "%s", error_text);
 done:
@@ -663,6 +707,7 @@ int finish_(UNUSED(Module m))
     /* Never send TLS shutdown on a connection inherited from the parent. */
     if (getpid() == owner) {
         websocket_cleanup();
+        http_cleanup();
         close_session();
         if (initialized)
             curl_global_cleanup();
@@ -670,6 +715,9 @@ int finish_(UNUSED(Module m))
     session = NULL;
     pool = NULL;
     websockets = NULL;
+    http_jobs = NULL;
+    http_pool = NULL;
+    http_reserved = 0;
     initialized = busy = 0;
     for (i = 0; i < ARRAY_SIZE(result_fields); ++i) {
         if (!result_fields[i].integer) {

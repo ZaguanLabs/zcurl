@@ -32,6 +32,9 @@ class Server(http.server.ThreadingHTTPServer):
         self.request_lock = threading.Lock()
         self.ws_frames = []
         self.ws_errors = []
+        self.ws_release = threading.Event()
+        self.http_release = threading.Event()
+        self.http_barrier = threading.Barrier(2)
 
     def handle_error(self, request, client_address):
         import traceback
@@ -65,6 +68,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             websocket_fixture.serve(self)
             return
         request_body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path == "/release-ws":
+            self.server.ws_release.set()
+        if self.path == "/release-http":
+            self.server.http_release.set()
+        if self.path.startswith("/parallel/"):
+            # Neither response can finish until both requests arrive.
+            self.server.http_barrier.wait(timeout=5)
+        if self.path == "/held":
+            self.send_response(200)
+            self.send_header("Content-Length", "10")
+            self.end_headers()
+            self.wfile.write(b"part")
+            self.server.slow_started.set()
+            assert self.server.http_release.wait(10), "held HTTP request was never released"
+            self.wfile.write(b"-final")
+            return
         if self.path == "/slow":
             self.server.slow_started.set()
             time.sleep(0.5)
@@ -75,6 +94,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         response_type = "application/octet-stream"
         if self.path == "/bytes":
             data = bytes(range(256)) + b"\n\n"
+        elif self.path.startswith("/parallel/"):
+            data = self.path.encode()
         elif self.path == "/large":
             data = b"x" * (8 * 1024 * 1024 + 1)
         elif self.path == "/echo":
@@ -98,6 +119,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data) + (5 if self.path == "/truncated" else 0)))
             self.send_header("Content-Type", response_type)
             self.send_header("X-Request-Method", self.command)
+            if self.headers.get("X-Owned"):
+                self.send_header("X-Observed-Owned", self.headers["X-Owned"])
             if self.path == "/headers":
                 self.send_header("Set-Cookie", "one=1")
                 self.send_header("Set-Cookie", "two=2")
@@ -303,6 +326,28 @@ def interrupt_test(env, plain):
         os.write(fd, b'zcurl ws info active; print -r -- "WS_HANDSHAKE_RECOVERED:$?:$zcurl_state"; zcurl --reset\n')
         wait_for(b"\r\nWS_HANDSHAKE_RECOVERED:0:open\r\n", timeout=2)
         print('PASS: PTY WebSocket poll/handshake cancellation, reentry/unload guards, result mutation and connection recovery')
+        os.write(fd, b'unset response; typeset -A response; zcurl http submit active --timeout 10000 -- "$ZCURL_TEST_HTTP/hang"; print -r -- HTTP_SUBMITTED\n')
+        wait_for(b"\r\nHTTP_SUBMITTED\r\n")
+        plain.slow_started.clear()
+        os.write(fd, b'zcurl http poll --timeout 1000\n')
+        assert plain.slow_started.wait(4), 'concurrent HTTP request never started'
+        start = time.monotonic()
+        os.write(fd, b'\x03')
+        os.write(fd, b'zcurl http info active; print -r -- "HTTP_PRESERVED:$?:$zcurl_state"\n')
+        wait_for(b"\r\nHTTP_PRESERVED:0:pending\r\n", timeout=2)
+        assert time.monotonic() - start < 1.5, 'HTTP poll cancellation was delayed'
+        os.write(fd, b'TRAPUSR1() { zcurl http cancel active; print -r -- "HTTP_REENTRY:$?"; zmodload -u zcurl; print -r -- "HTTP_UNLOAD:$?"; unset response; typeset -g response=changed; }; print -r -- HTTP_TRAP_READY\n')
+        wait_for(b"\r\nHTTP_TRAP_READY\r\n")
+        os.write(fd, b'zcurl http submit finishing -- "$ZCURL_TEST_HTTP/slow"; print -r -- HTTP_POLL_BEGIN; zcurl http poll -r response --timeout 1000; print -r -- "HTTP_MUTATION:$?:$zcurl_error_kind:$response"\n')
+        wait_for(b"\r\nHTTP_POLL_BEGIN\r\n")
+        os.kill(pid, signal.SIGUSR1)
+        wait_for(b"\r\nHTTP_REENTRY:2\r\n")
+        wait_for(b"\r\nHTTP_UNLOAD:1\r\n")
+        wait_for(b"\r\nHTTP_MUTATION:2:result:changed\r\n")
+        os.write(fd, b'unfunction TRAPUSR1; unset response; typeset -A response; zcurl http collect finishing -r response; print -r -- "HTTP_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http cancel active; zcurl http collect active -r response; print -r -- "HTTP_CANCELLED:$?:$response[state]:$response[error_kind]"; zcurl --reset\n')
+        wait_for(b"\r\nHTTP_RETAINED:0:200:1\r\n")
+        wait_for(b"\r\nHTTP_CANCELLED:42:cancelled:cancelled\r\n")
+        print('PASS: PTY concurrent HTTP interrupt preserves requests; reentry/unload and result mutation guards hold')
     finally:
         os.close(fd)
         try:
@@ -369,6 +414,29 @@ if __name__ == "__main__":
         integration(env, plain, tls, temp)
         api_test(env, plain, temp)
         loader_test(env)
+        before = plain.request_count
+        run(env, LOAD + '''
+            setopt errexit
+            typeset -A response
+            zcurl http submit untouched -- "$ZCURL_TEST_HTTP/tiny"
+            zcurl http cancel untouched
+            zcurl http collect untouched -r response && exit 1
+            [[ $response[state] == cancelled && $response[bytes] == 0 ]] || exit 2
+            zcurl http submit bad -r 'response[x]' -- "$ZCURL_TEST_HTTP/tiny" && exit 3
+            zcurl http submit bad -H $'X: bad\\nfield' -- "$ZCURL_TEST_HTTP/tiny" && exit 4
+            zmodload -u zcurl
+        ''')
+        assert plain.request_count == before, 'HTTP submission/cancellation or invalid inputs caused network I/O'
+        print(run(env, (ROOT / 'tests' / 'concurrency.zsh').read_text()))
+        assert (temp / 'concurrent.bin').read_bytes() == bytes(range(256)) + b'\n\n', 'owned async upload changed'
+        batch = subprocess.run(
+            ['zsh', '-df', str(ROOT / 'examples' / 'concurrent.zsh'),
+             env['ZCURL_TEST_HTTP'] + '/parallel/one', env['ZCURL_TEST_HTTP'] + '/parallel/two'],
+            env=env, cwd='/', capture_output=True, text=True, timeout=10)
+        assert batch.returncode == 0, batch.stderr
+        assert sorted(batch.stdout.splitlines()) == [
+            'request_1: HTTP 200, 13 bytes', 'request_2: HTTP 200, 13 bytes'], batch.stdout
+        print('PASS: concurrent batch example overlaps requests outside the checkout')
         ws_result = run(env, (ROOT / 'tests' / 'websocket.zsh').read_text())
         assert ws_result.startswith('PASS: WS/WSS'), 'WebSocket script ended before completing its assertions'
         print(ws_result)

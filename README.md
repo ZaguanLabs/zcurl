@@ -6,12 +6,12 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.3.0-dev** is intended for trying in a project: methods, request
+Version **0.4.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
-HTTP transfers are synchronous. Persistent WebSocket handles provide queued sends
-and incremental receive through explicit bounded polling. There is no autonomous
-background worker or concurrent HTTP request API.
+HTTP supports synchronous requests and named concurrent requests driven by
+explicit polling. Persistent WebSocket handles provide queued sends and
+incremental receive through bounded polling. There is no autonomous background worker.
 
 ## Build and load
 
@@ -100,6 +100,28 @@ keep secret-bearing calls out of diagnostic traces.
 
 See [examples/api-client.zsh](examples/api-client.zsh) for a runnable helper
 that writes into its caller's result array through Zsh's dynamic scope.
+
+## Concurrent HTTP
+
+```zsh
+typeset -A event response
+zcurl http submit users --fail -- https://api.example.com/users
+zcurl http submit teams --fail -- https://api.example.com/teams
+zcurl http poll -r event --timeout 100
+if [[ $event[event] == ready ]]; then
+    zcurl http collect "$event[handle]" -r response
+fi
+# Keep polling and collecting until both requests finish.
+```
+
+One poll advances every pending HTTP request. Submission copies the request;
+collection publishes the response and releases the handle. `cancel` preserves
+a partial response for collection; `drop` discards a request. Up to 32 named
+requests can coexist, within a shared 128 MiB storage reservation limit.
+
+See the [concurrency contract](docs/concurrency.md) for deadlines, result fields,
+error handling and lifecycle, or run [examples/concurrent.zsh](examples/concurrent.zsh)
+with several URLs. The existing `zcurl [options] URL` API remains synchronous.
 
 ## Persistent WebSockets
 
@@ -215,8 +237,9 @@ into a pipe or file for a binary consumer.
 
 ## Session and execution model
 
-The following describes synchronous HTTP. WebSocket scheduling and lifecycle
-are documented in the [WebSocket contract](docs/websocket.md#scheduling-and-ownership).
+The following describes synchronous HTTP. Explicit polling is documented in
+the [concurrent HTTP contract](docs/concurrency.md) and
+[WebSocket contract](docs/websocket.md#scheduling-and-ownership).
 
 The module owns one persistent easy handle and multi handle. A synchronous
 request is driven with `curl_multi_perform` and `curl_multi_poll`; poll waits
@@ -230,8 +253,8 @@ For both HTTP and WebSockets, call `zcurl` directly, then read its parameters.
 `$(zcurl ...)`, background calls, and children inheriting the loaded module are deliberately rejected.
 A fork duplicates handles and socket descriptors; it does not create an
 independent TLS session. Start a fresh Zsh process to own a separate module.
-Normal fork/pipeline composition, autonomous background work and concurrency
-remain future work. Do not call this synchronous builtin from a prompt/ZLE
+Normal fork/pipeline composition and autonomous background work remain future
+work. Do not call the synchronous request API from a prompt/ZLE
 callback when you need uninterrupted typing.
 
 ## Validation and next steps
@@ -256,5 +279,5 @@ of tiny loopback requests, not predictions for real API latency. Use
 `make benchmark` to measure this revision on your machine.
 
 [Exploration notes](docs/exploration.md) cover the architectural options.
-Next: Blade client integration feedback on the WebSocket API, file/descriptor
-streaming, named HTTP sessions, and explicit submit/poll/wait/collect operations for concurrent transfers.
+Next: integration feedback on the concurrent HTTP and WebSocket APIs,
+file/descriptor streaming, named HTTP sessions, and scheduling beyond explicit polling.

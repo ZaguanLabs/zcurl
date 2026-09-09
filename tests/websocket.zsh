@@ -76,6 +76,46 @@ collect_message bulk
 check ${#collected} 4000000
 check "$collected" "$large"
 zcurl ws drop bulk
+# Real socket backpressure retains the partially sent frame and its storage.
+zmodload zsh/datetime
+zcurl ws open stalled --max-queue 8388608 -- "$ws_url/ws-stalled"
+next_event stalled
+check "$response[body]" ready
+large=${(pl:8388608::x:)empty}
+zcurl ws send stalled --type binary --data "$large"
+integer pending=-1 stalled_seen=0
+float poll_started
+repeat 20; do
+    poll_started=$EPOCHREALTIME
+    zcurl ws poll stalled -r response --timeout 100
+    (( EPOCHREALTIME - poll_started < 2 )) || fail 'stalled poll exceeded deadline'
+    check $response[event] idle
+    (( response[queued_bytes] > 0 )) || fail 'fixture did not force backpressure'
+    if (( pending == response[queued_bytes] )); then
+        stalled_seen=1
+        break
+    fi
+    pending=$response[queued_bytes]
+done
+(( stalled_seen && pending < 8388608 )) || fail 'partial send did not stall'
+if zcurl ws send stalled -r response --data x; then fail 'partially sent storage was released early'; fi
+check $response[error_kind] queue-limit
+check $response[queued_bytes] $pending
+check $response[queued_frames] 1
+# Another handle and HTTP must remain usable while this socket is blocked.
+zcurl ws send blade --data responsive
+collect_message blade
+check "$collected" responsive
+zcurl "$ZCURL_TEST_HTTP/release-ws"
+collect_message stalled
+check "$collected" "$large"
+zcurl ws send stalled --data recovered
+collect_message stalled
+check "$collected" recovered
+zcurl ws close stalled
+next_event stalled
+check $response[state] closed
+zcurl ws drop stalled
 # A second handle gets unsolicited fragmented text and automatic pong.
 zcurl ws open push -- "$ws_url/ws-push"
 next_event push
