@@ -54,6 +54,18 @@ session_request_defaults(struct request *r, unsigned seen)
     return 1;
 }
 
+/* Canonical names are shared by setting and unsetting configuration. */
+static unsigned
+session_setting(const char *name)
+{
+    static const char *names[] = {"timeout", "connect-timeout", "max-body", "cacert",
+                                  "proxy-cacert", "proxy", "noproxy"};
+    size_t i;
+    for (i = 0; i < ARRAY_SIZE(names); ++i)
+        if (!strcmp(name, names[i])) return 1u << i;
+    return 0;
+}
+
 /* Validate a complete patch before committing it. Configuration never closes
  * pools, drives I/O, changes transfer globals, or alters retained jobs. */
 static int
@@ -61,7 +73,7 @@ session_configure(struct http_session *s, char **args)
 {
     long timeout = s->timeout, connect_timeout = s->connect_timeout, max_body = s->max_body;
     char *ca = NULL, *proxy_ca = NULL, *proxy = NULL, *noproxy = NULL;
-    const char *message = "configure requires timeout/connect-timeout (1..600000 ms), max-body (1..67108864 bytes), cacert/proxy-cacert/proxy/noproxy (at most 4096 bytes each), or --defaults alone";
+    const char *message = "configure requires timeout/connect-timeout (1..600000 ms), max-body (1..67108864 bytes), cacert/proxy-cacert/proxy/noproxy (at most 4096 bytes each), --unset SETTING, or --defaults alone";
     int status = 2;
     unsigned seen = 0;
     if (!*args) goto usage;
@@ -71,26 +83,34 @@ session_configure(struct http_session *s, char **args)
     }
     while (*args) {
         char *option = text_argument(*args++), *value;
-        long *target = NULL, maximum = 0;
+        long *target = NULL, maximum = 0, standard = 0;
         unsigned bit;
+        int unset;
         if (!option) goto usage;
-        if (!strcmp(option, "--timeout") || !strcmp(option, "-t")) {
-            bit = 1; target = &timeout; maximum = 600000;
-        } else if (!strcmp(option, "--connect-timeout")) {
-            bit = 2; target = &connect_timeout; maximum = 600000;
-        } else if (!strcmp(option, "--max-body")) {
-            bit = 4; target = &max_body; maximum = MAX_BODY_LIMIT;
-        } else if (!strcmp(option, "--cacert") || !strcmp(option, "-c")) {
-            bit = 8;
-        } else if (!strcmp(option, "--proxy-cacert")) {
-            bit = 16;
-        } else if (!strcmp(option, "--proxy") || !strcmp(option, "-x")) {
-            bit = 32;
-        } else if (!strcmp(option, "--noproxy")) {
-            bit = 64;
-        } else goto usage;
-        if ((seen & bit) || !*args || !(value = text_argument(*args++))) goto usage;
+        unset = !strcmp(option, "--unset");
+        if (unset) {
+            if (!*args || !(option = text_argument(*args++))) goto usage;
+        } else {
+            if (!strcmp(option, "-t")) option = "--timeout";
+            else if (!strcmp(option, "-c")) option = "--cacert";
+            else if (!strcmp(option, "-x")) option = "--proxy";
+            if (strncmp(option, "--", 2)) goto usage;
+            option += 2;
+        }
+        bit = session_setting(option);
+        if (!bit || (seen & bit)) goto usage;
         seen |= bit;
+        switch (bit) {
+        case 1: target = &timeout; maximum = 600000; standard = 10000; break;
+        case 2: target = &connect_timeout; maximum = 600000; standard = 3000; break;
+        case 4: target = &max_body; maximum = MAX_BODY_LIMIT; standard = BODY_LIMIT; break;
+        }
+        if (unset) {
+            if (target) *target = standard;
+            /* Staged string pointers remain NULL, clearing only this setting. */
+            continue;
+        }
+        if (!*args || !(value = text_argument(*args++))) goto usage;
         if (target) {
             if (!decimal(value, 1, maximum, target)) goto usage;
         } else {

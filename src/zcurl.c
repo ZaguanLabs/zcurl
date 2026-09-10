@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.24.0-dev"
+#define ZCURL_VERSION "0.25.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -884,6 +884,8 @@ help(void)
          "  Manage named HTTP pools; preserves transfer results.\n"
          "zcurl session configure NAME [-t MS] [--connect-timeout MS] [--max-body BYTES]\n"
          "                             [-c FILE] [--proxy-cacert FILE] [-x URL] [--noproxy HOSTS]\n"
+         "zcurl session configure NAME --unset SETTING [--unset SETTING ...]\n"
+         "  Restore individual defaults; may combine with updates to other settings.\n"
          "zcurl session configure NAME --defaults\n"
          "  Set request defaults or restore standard values; retained jobs are unchanged.\n"
          "zcurl session jobs NAME --result ARRAY [--state all|pending|done|cancelled]\n"

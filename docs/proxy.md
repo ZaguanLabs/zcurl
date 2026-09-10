@@ -1,4 +1,4 @@
-# HTTP and WebSocket proxy routing (0.24.0-dev)
+# HTTP and WebSocket proxy routing (0.25.0-dev)
 
 Synchronous HTTP, `zcurl http submit` and `zcurl ws open` accept routing controls:
 
@@ -149,6 +149,7 @@ their captured paths. See [session CA defaults](sessions.md#ca-file-defaults).
 Named HTTP sessions also accept `configure NAME --proxy URL --noproxy HOSTS`.
 Per-request values take precedence, and `create NAME --from SOURCE` copies the
 configured route. Empty values preserve their explicit routing meaning;
-`configure --defaults` removes both routing overrides along with the other
-configured defaults. Session metadata includes routing values and flags that
+`configure NAME --unset proxy --unset noproxy` removes only the routing
+overrides. Either can be unset independently. `configure --defaults` restores
+all configured defaults. Session metadata includes routing values and flags that
 distinguish unset from explicit empty. See [session routing](sessions.md#proxy-and-bypass-defaults).

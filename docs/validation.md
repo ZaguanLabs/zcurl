@@ -1,4 +1,4 @@
-# Validation of 0.24.0-dev
+# Validation of 0.25.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -159,6 +159,14 @@ requests; the HTTPS proxy fixture verifies three tunnels with copied routing and
 independent trust. Bounded and Unicode/newline strings exercise validation and
 cleanup without interpreting them as proxy addresses during configuration.
 
+Selective-default restoration covers all seven fields, idempotent unsets,
+atomic combinations with ordinary updates, alias conflicts, invalid names and
+preserved transfer errors. Three server-observed TLS connections carry three
+requests: warm reuse, a retained job with its original CA path, and a rejected
+future TLS connection after trust removal. Proxy tests restore environment
+selection and bypass independently while retaining trust/limits and accepted jobs.
+Completion filters already updated/unset fields without reading session state.
+
 ## HTTP compression coverage
 
 - Gzip and zlib deflate generated independently by the loopback fixture; all
@@ -191,7 +199,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 195 resulting command buffers, including:
+completion widget. The test checks 214 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -394,7 +402,7 @@ third-party libraries themselves are not instrumented by this target.
 ## Memory checks and dependency findings
 
 `make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
-instrumentation. The full suite passes, including all 195 completion cases,
+instrumentation. The full suite passes, including all 214 completion cases,
 loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
 preloaded into test children; leak detection is disabled for this target.
 A deliberately overflowing child whose failure was ignored by its parent still

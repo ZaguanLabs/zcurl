@@ -7,6 +7,7 @@ local -A opt_args
 local -a specs operations allowed expl handles
 local -a invalid_names=( '[^A-Za-z_]*' '*[^A-Za-z_0-9]*' )
 local mode=http operation=request
+local -a session_used session_unset
 
 if (( CURRENT > 2 )); then
   case $words[2] in
@@ -91,6 +92,29 @@ elif [[ $mode == session && $operation == jobs ]]; then
 elif [[ $mode == session && $operation == info ]]; then
   specs=( '(-r --result)'{-r,--result}'[store session information]:associative array:->associations' )
 elif [[ $mode == session ]]; then
+  # Follow value boundaries so a literal '--unset' proxy value is not an option.
+  local setting short spec
+  local -i i
+  for (( i = 2; i < CURRENT; ++i )); do
+    case $words[i] in
+      --unset)
+        (( ++i < CURRENT )) || break
+        setting=$words[i]
+        case $setting in
+          timeout|connect-timeout|max-body|cacert|proxy-cacert|proxy|noproxy)
+            session_unset+=( "$setting" ) ;;
+          *) break ;;
+        esac
+        ;;
+      -t|--timeout) setting=timeout; (( ++i )) ;;
+      -c|--cacert) setting=cacert; (( ++i )) ;;
+      -x|--proxy) setting=proxy; (( ++i )) ;;
+      --connect-timeout|--max-body|--proxy-cacert|--noproxy)
+        setting=${words[i]#--}; (( ++i )) ;;
+      *) break ;;
+    esac
+    session_used+=( "$setting" )
+  done
   specs=(
     '(--defaults -t --timeout)'{-t,--timeout}'[default total request timeout]:milliseconds (1..600000):'
     '(--defaults)--connect-timeout[default connection timeout]:milliseconds (1..600000):'
@@ -99,8 +123,21 @@ elif [[ $mode == session ]]; then
     '(--defaults)--proxy-cacert[default HTTPS proxy trust file; empty clears]:proxy CA file:_files'
     '(--defaults -x --proxy)'{-x,--proxy}'[default proxy; empty disables]:proxy URL:->proxy-url'
     '(--defaults)--noproxy[default bypass list; empty bypasses none]:comma-separated hosts (or *):'
+    '(--defaults)*--unset[restore one standard default]:setting:->session-settings'
     '(- *)--defaults[restore standard request defaults]'
   )
+  # Unsetting a field conflicts with setting it, including the short aliases.
+  for setting in "${session_unset[@]}"; do
+    short=''
+    case $setting in
+      timeout) short=-t ;; cacert) short=-c ;; proxy) short=-x ;;
+    esac
+    local -a filtered=()
+    for spec in "${specs[@]}"; do
+      [[ $spec == *"--${setting}["* || ( -n $short && $spec == *"${short}["* ) ]] || filtered+=( "$spec" )
+    done
+    specs=( "${filtered[@]}" )
+  done
 elif [[ $mode == headers ]]; then
   specs=(
     '--from[raw HTTP response headers]:raw header transcript:'
@@ -187,6 +224,10 @@ esac
 
 _arguments -C -0 -S "$specs[@]" && return 0
 case $state in
+  session-settings)
+    local -a settings=( timeout connect-timeout max-body cacert proxy-cacert proxy noproxy )
+    _wanted settings expl 'session setting' compadd -F session_used -a settings
+    ;;
   http-sessions)
     if [[ ${parameters[zcurl_http_sessions]-} == *array*readonly*special* ]]; then
       handles=( "${zcurl_http_sessions[@]}" )

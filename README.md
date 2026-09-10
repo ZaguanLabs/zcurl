@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.24.0-dev** is intended for trying in a project: methods, request
+Version **0.25.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -376,7 +376,9 @@ override them. Already submitted jobs keep their original settings. Use
 `zcurl session configure NAME --defaults` to restore standard values without
 closing connections. Sessions also accept `--proxy URL` and `--noproxy HOSTS`;
 empty values explicitly disable proxy use or bypass no hosts, respectively.
-`--defaults` restores environment routing along with the other standard defaults.
+`configure NAME --unset proxy --unset noproxy` restores environment routing
+while keeping other settings. `--unset` also restores individual timeout, size
+and CA defaults; `--defaults` restores everything.
 `zcurl session info NAME --result ARRAY` copies the current
 defaults and retained-job count into a declared associative array without I/O
 or changing the last transfer result. `zcurl session jobs NAME --result ARRAY`

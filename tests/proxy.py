@@ -145,6 +145,29 @@ def test(env, plain, temp, run):
             assert output.endswith('PROXY_CASE_DONE'), output
             assert len(server.records) == before + count, (source, server.records[before:])
 
+        check('''
+            typeset -A info
+            zcurl session create partial
+            zcurl session configure partial --proxy '' --noproxy '' --cacert "$ZCURL_TEST_CA" \
+                --proxy-cacert retained_proxy_ca --timeout 10000 --max-body 1024
+            zcurl --session partial "$ZCURL_TEST_HTTPS/tiny"
+            zcurl session configure partial --unset proxy --timeout 20000
+            zcurl session info partial -r info
+            check $info[proxy_set] 0
+            check $info[noproxy_set] 1
+            check "$info[cacert]" "$ZCURL_TEST_CA"
+            check "$info[proxy_cacert]" retained_proxy_ca
+            check $info[timeout] 20000
+            check $info[max_body] 1024
+            zcurl http submit accepted --session partial "$ZCURL_TEST_HTTPS/tiny"
+            zcurl session configure partial --unset noproxy
+            zcurl --session partial "$ZCURL_TEST_HTTPS/tiny"
+            zcurl http wait accepted
+            zcurl http collect accepted
+            check "$zcurl_body" $'ok\\n'
+            zcurl session drop partial
+        ''', 1, NO_PROXY='*')
+
         routing_before = plain.request_count
         check(Path(__file__).with_name('session-routing.zsh').read_text(), 9, NO_PROXY='*')
         assert plain.request_count == routing_before + 18, 'session routing caused unexpected origin I/O'

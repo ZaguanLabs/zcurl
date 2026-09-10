@@ -645,6 +645,11 @@ if __name__ == "__main__":
         trust_defaults = run(env, (ROOT / 'tests' / 'session-trust.zsh').read_text())
         assert trust_defaults.startswith('PASS: session CA defaults'), trust_defaults
         print(trust_defaults)
+        unset_before = (tls.connections, tls.request_count)
+        session_unset = run(env, (ROOT / 'tests' / 'session-unset.zsh').read_text())
+        assert session_unset.startswith('PASS: individual session defaults'), session_unset
+        assert (tls.connections - unset_before[0], tls.request_count - unset_before[1]) == (3, 3), 'session unsets caused I/O or lost pool reuse'
+        print(session_unset)
         copy_before = (tls.connections, tls.request_count)
         session_copy = run(env, (ROOT / 'tests' / 'session-copy.zsh').read_text())
         assert session_copy.startswith('PASS: session configuration copies'), session_copy

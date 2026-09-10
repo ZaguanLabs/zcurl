@@ -1,4 +1,4 @@
-# Named HTTP sessions (0.24.0-dev)
+# Named HTTP sessions (0.25.0-dev)
 
 Named sessions give HTTP callers independent libcurl connection pools.
 Create a session explicitly, then select it on each request:
@@ -30,6 +30,7 @@ WebSocket names occupy independent namespaces.
 | `zcurl session create NAME --from SOURCE` | Reserve a new name with owned copies of an existing session's defaults and fresh pools |
 | `zcurl session reset NAME` | Close that session's connections and destroy both its synchronous and concurrent handles, retaining the name, configuration and creation order |
 | `zcurl session configure NAME [options]` | Update defaults for future requests without closing connections |
+| `zcurl session configure NAME --unset SETTING` | Restore one standard default; repeat for distinct settings and combine with other updates |
 | `zcurl session configure NAME --defaults` | Restore standard request defaults without closing connections |
 | `zcurl session info NAME --result ARRAY` | Copy defaults and the retained-job count into a declared associative array without I/O |
 | `zcurl session jobs NAME --result ARRAY [--state STATE]` | Copy this session's retained request names into an indexed array without I/O |
@@ -119,7 +120,8 @@ zcurl session configure inventory --defaults
 | `-x` / `--proxy` | Inherit environment proxy | Proxy string, at most 4096 decoded bytes; empty disables proxies |
 | `--noproxy` | Inherit environment bypass list | Bypass string, at most 4096 decoded bytes; empty bypasses no hosts |
 
-Supply at least one setting. Unmentioned settings retain their previous values.
+Supply at least one setting update or `--unset SETTING`. Unmentioned settings
+retain their previous values.
 The entire update is validated before applying it; an invalid value, repeated
 setting (including aliases), unsupported option or missing value returns 2
 without changing configuration or transfer results. `--defaults` must appear
@@ -145,6 +147,36 @@ reset retains configuration while closing pools; drop/recreate, global reset
 and unload discard it. Restoring `--defaults` changes configuration while
 retaining connections. The 13-/16-field HTTP result shapes are unchanged.
 
+### Restoring individual defaults
+
+```zsh
+# Return proxy selection to the environment while retaining the bypass and CA settings.
+zcurl session configure inventory --unset proxy
+# Return both routing settings to the environment and update the timeout atomically.
+zcurl session configure inventory --unset proxy --unset noproxy --timeout 5000
+# Restore the standard response limit and remove the configured origin CA path.
+zcurl session configure inventory --unset max-body --unset cacert
+```
+
+`--unset` takes one canonical setting name: `timeout`, `connect-timeout`,
+`max-body`, `cacert`, `proxy-cacert`, `proxy` or `noproxy`. Names omit leading
+hyphens and use the long option spelling; short aliases and metadata keys such
+as `connect_timeout` are not accepted. Numeric settings return to the standard
+values in the table. CA paths are cleared. Routing settings become unset and
+inherit the environment, unlike explicit empty routing strings.
+
+Repeat `--unset` for distinct settings, and combine it with updates to other
+settings in either order. The entire command is one validated patch. Naming a
+setting twice, including setting and unsetting it in the same command, returns
+2 without applying any of the patch. `--defaults` remains exclusive. Unsetting
+an already standard/unset field succeeds; repeating it across calls is safe.
+
+Selective restoration preserves connection pools, retained jobs, other settings
+and the last transfer result. Accepted jobs keep their original limits, trust
+paths and explicit routing strings. A session created with `--from` retains its
+own configuration when the source's settings are unset. These operations do not
+change the eleven-field session metadata or the 13-/16-field transfer snapshots.
+
 ### Proxy and bypass defaults
 
 ```zsh
@@ -160,8 +192,9 @@ the environment bypass list. Explicit `--proxy ''` disables proxy use, while
 `--noproxy ''` bypasses no hosts and `--noproxy '*'` bypasses every host. Configure
 both values to make a request's routing independent of environment changes.
 An empty routing value remains an override, unlike an empty configured CA path.
-To return to environment routing, use `configure --defaults`, which also resets
-all other defaults, then reapply any wanted timeout, size or CA settings.
+To return either setting to environment routing, use `configure NAME --unset proxy`
+or `--unset noproxy`. Both can appear in one command while retaining all other
+defaults. `configure --defaults` restores every standard value.
 
 The settings apply to synchronous HTTP and concurrent submissions; explicit
 request options win in either position relative to `--session`. Accepted jobs
@@ -370,3 +403,10 @@ inheritance, overrides in both orders, owned submissions and copied sessions.
 HTTPS proxy tests verify retained routing alongside independent origin/proxy CA
 paths. Metadata distinguishes unset values; invalid patches, 4096-byte bounds,
 Unicode/newline strings and repeated cleanup exercise ownership without I/O.
+
+Selective-reset tests cover every default, mixed updates, duplicate/conflicting
+settings, invalid canonical names, preserved failed-transfer globals, copied
+sessions and hidden discovery. TLS counters verify preserved warm connections,
+retained trust after submission and rejection by future requests after CA removal.
+The proxy fixture verifies independent environment inheritance while preserving
+CA and numeric defaults, including a queued request's original bypass override.
