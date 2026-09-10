@@ -7,6 +7,7 @@ import json
 import select
 import socket
 import threading
+from pathlib import Path
 from urllib.parse import urlsplit
 
 
@@ -254,8 +255,90 @@ def test(env, plain, temp, run):
                 if zcurl "$flag" '' "$flag" '' "$ZCURL_TEST_HTTP/tiny"; then exit 1; else check $? 2; fi
                 if zcurl "$flag" $'bad\\0tail' "$ZCURL_TEST_HTTP/tiny"; then exit 1; else check $? 2; fi
             done
-            if zcurl ws open invalid --proxy '' "${ZCURL_TEST_HTTP/http:/ws:}/ws"; then exit 1; else check $? 2; fi
+            if zcurl ws send invalid --proxy ''; then exit 1; else check $? 2; fi
         ''', 0)
         assert plain.request_count == before
         assert not server.errors, server.errors
     print('PASS: HTTP proxy routing, bypass/reset, concurrent ownership, CONNECT TLS, credentials and binary output')
+    test_websockets(env, plain, run, setup)
+
+
+def test_websockets(env, plain, run, setup):
+    setup += '''
+        typeset ws_url=${ZCURL_TEST_HTTP/http:/ws:}
+        typeset wss_url=${ZCURL_TEST_HTTPS/https:/wss:}
+    '''
+    with fixture(env) as (server, proxy_env):
+        def check(source, count, **overrides):
+            before = len(server.records)
+            output = run(dict(proxy_env, **overrides), setup + source + '\nprint WS_PROXY_CASE_DONE\n')
+            assert output.endswith('WS_PROXY_CASE_DONE'), output
+            records = server.records[before:]
+            assert len(records) == count, (source, records)
+            for method, _, headers in records:
+                assert method == 'CONNECT', records
+                assert not {'authorization', 'x-origin'} & {k.lower() for k in headers}, headers
+
+        for endpoint in ('$ws_url', '$wss_url'):
+            opening = f'zcurl ws open via -c "$ZCURL_TEST_CA" "{endpoint}/ws"'
+            check(opening + '\nzcurl ws drop via', 1)
+            check(opening + " --proxy ''\nzcurl ws drop via", 0)
+            check(opening + ' --proxy "$ZCURL_TEST_PROXY"\nzcurl ws drop via', 0, NO_PROXY='*')
+            check(opening + ' --proxy "$ZCURL_TEST_PROXY" --noproxy ""\nzcurl ws drop via', 1, NO_PROXY='*')
+            check(opening + ' --noproxy "*"\nzcurl ws drop via', 0)
+
+        check('''
+            zcurl ws open direct --proxy '' "$ws_url/ws"
+            zcurl ws drop direct
+            zcurl ws open inherited "$ws_url/ws"
+            zcurl ws drop inherited
+            check "$http_proxy" "$ZCURL_TEST_PROXY"
+            check "$NO_PROXY" ''
+        ''', 1)
+        server.require_auth = True
+        authenticated = proxy_env['ZCURL_TEST_PROXY'].replace('http://', 'http://fixture:secret@')
+        check(Path(__file__).with_name('websocket-proxy.zsh').read_text(), 4, AUTH_PROXY=authenticated)
+        check('''
+            if zcurl ws open denied "$ws_url/ws"; then exit 1; fi
+            check $zcurl_error_kind transport
+            check $zcurl_complete 0
+            check ${#zcurl_ws_handles} 0
+        ''', 1)
+        server.require_auth = False
+        for source in ('zcurl ws open bad "$wss_url/ws"',
+                       'zcurl ws open bad -c "$ZCURL_TEST_CA" "${ZCURL_TEST_MISMATCH/https:/wss:}/ws"'):
+            check(f'''if {source}; then exit 1; else check $? 60; fi
+                      check $zcurl_complete 0
+                      check ${{#zcurl_ws_handles}} 0''', 1)
+        server.reject_connect = True
+        check('''
+            if zcurl ws open rejected "$ws_url/ws"; then exit 1; fi
+            check $zcurl_error_kind transport
+            check ${#zcurl_ws_handles} 0
+        ''', 1)
+        server.reject_connect = False
+        with socket.socket() as refused:
+            refused.bind(('127.0.0.1', 0))
+            before = plain.request_count
+            check('''
+                if zcurl ws open refused -x "$REFUSED_PROXY" "$ws_url/ws"; then exit 1; else check $? 7; fi
+                check $zcurl_error_kind transport
+                check ${#zcurl_ws_handles} 0
+            ''', 0, REFUSED_PROXY=f'http://127.0.0.1:{refused.getsockname()[1]}')
+            assert plain.request_count == before
+
+        before = plain.request_count
+        check('''
+            for flag in --proxy --noproxy; do
+                if zcurl ws open bad "$flag"; then exit 1; else check $? 2; fi
+                if zcurl ws open bad "$flag" '' "$flag" '' "$ws_url/ws"; then exit 1; else check $? 2; fi
+                if zcurl ws open bad "$flag" $'bad\\0tail' "$ws_url/ws"; then exit 1; else check $? 2; fi
+                for operation in send recv poll close info drop; do
+                    if zcurl ws "$operation" bad "$flag" ''; then exit 1; else check $? 2; fi
+                done
+            done
+            if zcurl ws open bad -x '' --proxy '' "$ws_url/ws"; then exit 1; else check $? 2; fi
+            check ${#zcurl_ws_handles} 0
+        ''', 0)
+        assert plain.request_count == before
+    print('PASS: WS/WSS proxy routing, CONNECT headers/authentication, binary frames, fragmentation, ping/pong, close and cleanup')

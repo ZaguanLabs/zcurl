@@ -82,6 +82,15 @@ else
 fi
 
 case $mode:$operation in
+  http:request|http:submit|ws:open)
+    specs+=(
+      '(-x --proxy)'{-x,--proxy}'[override proxy; empty disables proxies]:proxy URL:->proxy-url'
+      '--noproxy[override bypass list; empty bypasses none]:comma-separated hosts (or *):'
+    )
+    ;;
+esac
+
+case $mode:$operation in
   http:request|http:submit)
     specs+=(
       '(-c --cacert)'{-c,--cacert}'[PEM trust file]:CA file:_files'
@@ -94,8 +103,6 @@ case $mode:$operation in
       '(-I --head -d --data --data-fd)'{-I,--head}'[request headers only]'
       '(-f --fail)'{-f,--fail}'[return 22 for HTTP errors, retaining the response]'
       '--compressed[negotiate and decode HTTP content compression]'
-      '(-x --proxy)'{-x,--proxy}'[override proxy; empty disables proxies]:proxy URL:->proxy-url'
-      '--noproxy[override bypass list; empty bypasses none]:comma-separated hosts (or *):'
       '--max-body[response limit, default 8388608 bytes]:bytes (1..67108864):'
       '--output-fd[write the response directly to a regular file]:writable regular-file descriptor:'
     )

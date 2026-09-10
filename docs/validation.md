@@ -1,4 +1,4 @@
-# Validation of 0.12.0-dev
+# Validation of 0.13.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -65,7 +65,7 @@ every resolver, signal trap, job-control combination, or backend behavior.
 These checks cover connection sockets and retained file duplicates, not every
 descriptor opened internally by libcurl backends. See [the scope](descriptors.md).
 
-## HTTP proxy coverage
+## HTTP and WebSocket proxy coverage
 
 - Environment defaults, explicit direct routing, host/list/wildcard/CIDR
   bypasses, empty-list overrides and per-request reset without environment edits.
@@ -78,6 +78,13 @@ descriptor opened internally by libcurl backends. See [the scope](descriptors.md
   credentials, credential reset and no proxy authorization in tunneled requests.
 - Exact binary concurrent file output through CONNECT, and invalid options
   rejected before either proxy or origin requests.
+- WS/WSS CONNECT routing, explicit and inherited settings, bypass overrides,
+  mixed direct/proxied handles and function-local option strings.
+- Authenticated WebSocket tunnels with origin authentication kept out of CONNECT
+  and proxy credentials kept out of the origin handshake; binary frames,
+  fragmented UTF-8, interleaved ping/pong, graceful close and reset/unload.
+- WebSocket TLS, authentication, refused tunnel and connection failures retain
+  no handle; invalid routing options are rejected before I/O.
 
 Only loopback HTTP proxies are covered. See [routing and limitations](proxy.md).
 
@@ -113,7 +120,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 98 resulting command buffers, including:
+completion widget. The test checks 105 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -124,7 +131,8 @@ completion widget. The test checks 98 resulting command buffers, including:
 - Methods, frame types, body/HEAD exclusions, repeated headers, options after
   a URL, end-of-options handling, and unsupported attached argument forms.
 - HTTP-only `--compressed` suggestions and suppression after use.
-- HTTP proxy/bypass flags, short aliases, duplicate suppression and scheme prefixes.
+- HTTP and WebSocket-open proxy/bypass flags, short aliases, duplicate suppression
+  and scheme prefixes; routing options are absent from other operations.
 - Associative versus indexed result arrays; filtering readonly, converting,
   unique and non-ASCII names.
 - CA filenames containing spaces and brackets, URL scheme prefixes, mid-word

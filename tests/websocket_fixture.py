@@ -29,6 +29,7 @@ def serve(h):
     key = h.headers["Sec-WebSocket-Key"]
     if h.path == '/ws-auth':
         assert h.headers.get('Authorization') == 'Bearer fixture-token', 'handshake authentication missing'
+        assert 'Proxy-Authorization' not in h.headers, 'proxy credentials reached origin'
     accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
     h.send_response(101)
     h.send_header("Upgrade", "websocket")

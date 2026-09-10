@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.12.0-dev** is intended for trying in a project: methods, request
+Version **0.13.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -92,7 +92,8 @@ Each call resets request options, including method, body, headers and CA file,
 while retaining the connection pool. Supply authentication headers on each
 request. No cookie engine is enabled. curl's CLI config files are not read;
 libcurl's proxy environment settings apply unless overridden by `--proxy` or
-`--noproxy`. Use `--proxy ''` for an explicitly direct HTTP request; see
+`--noproxy`. These options also apply to `zcurl ws open`. Use `--proxy ''`
+for an explicitly direct request or connection; see
 [per-request routing](docs/proxy.md).
 
 `--data` sends literal bytes, including NUL and trailing newlines. It does not
