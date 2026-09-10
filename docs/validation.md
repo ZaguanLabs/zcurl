@@ -9,6 +9,7 @@ check treats warnings as errors. Other Zsh builds and platforms are untested.
 ```zsh
 make test
 make memcheck
+make ubsan
 make benchmark
 ```
 
@@ -262,6 +263,19 @@ The WS build minimum is now libcurl 8.16.0; this environment's 8.21.0 is the
 only version validated here. Proxy/subprotocol policy, other TLS backends,
 platforms and libcurl versions, ZLE integration, and the Blade application
 protocol still require integration testing. See [the API contract](websocket.md).
+
+## Undefined-behavior checks
+
+`make ubsan` builds a separate instrumented module and runs the entire suite,
+including the loader, examples, completion and signal PTYs. GCC 15.2.0 with
+`-fsanitize=undefined -fno-sanitize-recover=all` passed on the environment above.
+Every child-process report fails the suite, even for expected-failure subshells.
+
+A deliberate signed-overflow probe verified failure propagation. Process maps
+also confirmed that the staged loader loaded the instrumented library rather
+than the normal module. Missing or uninstrumented selections are rejected.
+See [reproduction, artifact selection and limits](sanitizers.md). The shell and
+third-party libraries themselves are not instrumented by this target.
 
 ## Memory checks and dependency findings
 

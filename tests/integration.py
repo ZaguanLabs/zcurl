@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import shutil
 import signal
 import socket
 import ssl
@@ -153,9 +154,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 @contextlib.contextmanager
-def fixture():
+def fixture(module_dir=None, ubsan=False):
+    module_dir = (module_dir or ROOT / 'build').resolve()
+    if not (module_dir / 'zcurl.so').is_file():
+        raise FileNotFoundError(f'no zcurl.so in {module_dir}; build the selected module first')
     with tempfile.TemporaryDirectory(prefix="zcurl-test-ø-") as temp:
         temp = Path(temp)
+        project = ROOT
+        if module_dir != ROOT / 'build':
+            # The loader intentionally resolves build/ relative to its source.
+            # Stage real loader/example files beside the selected library so
+            # these tests cannot silently fall back to the normal module.
+            project = temp / 'project'
+            (project / 'build').mkdir(parents=True)
+            (project / 'build' / 'zcurl.so').symlink_to(module_dir / 'zcurl.so')
+            shutil.copy2(ROOT / 'zcurl.zsh', project / 'zcurl.zsh')
+            shutil.copytree(ROOT / 'examples', project / 'examples')
         cert, key = temp / "local-ca.pem", temp / "local-key.pem"
         subprocess.run([
             "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
@@ -174,11 +188,15 @@ def fixture():
             thread.start()
             threads.append(thread)
         env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
-        env.update(NO_PROXY="*", ZCURL_MODULE_PATH=str(ROOT / "build"),
+        env.update(NO_PROXY="*", ZCURL_MODULE_PATH=str(module_dir), ZCURL_TEST_ROOT=str(project),
                    ZCURL_TEST_CA=str(cert), ZCURL_TEST_TMP=str(temp),
                    ZCURL_TEST_HTTP=f"http://127.0.0.1:{plain.server_port}",
                    ZCURL_TEST_HTTPS=f"https://localhost:{tls.server_port}",
                    ZCURL_TEST_MISMATCH=f"https://127.0.0.1:{tls.server_port}")
+        if ubsan:
+            # Reports from expected-failure subshells must fail the whole suite
+            # too. Per-process logs also preserve diagnostics from PTY shells.
+            env['UBSAN_OPTIONS'] = f'halt_on_error=1:print_stacktrace=1:log_path={temp}/ubsan'
         try:
             yield env, plain, tls, temp
         finally:
@@ -186,6 +204,11 @@ def fixture():
                 server.shutdown()
                 server.server_close()
                 thread.join()
+            if ubsan:
+                reports = sorted(temp.glob('ubsan.*'))
+                if reports:
+                    diagnostics = '\n'.join(f'{p.name}:\n{p.read_text()}' for p in reports)
+                    raise AssertionError(f'UndefinedBehaviorSanitizer reported errors:\n{diagnostics}')
 
 
 def run(env, source):
@@ -245,7 +268,7 @@ def api_test(env, plain, temp):
 
 
 def loader_test(env):
-    env = dict(env, ZCURL_TEST_ROOT=str(ROOT))
+    project = Path(env['ZCURL_TEST_ROOT'])
     print(run(env, '''
         setopt errexit nounset
         typeset -a original_path=( "${module_path[@]}" )
@@ -261,7 +284,7 @@ def loader_test(env):
         builtin zmodload -u zcurl
         print -r -- 'PASS: project loader is idempotent and preserves module_path and aliases'
     '''))
-    result = subprocess.run(["zsh", "-df", str(ROOT / "examples" / "api-client.zsh"),
+    result = subprocess.run(["zsh", "-df", str(project / "examples" / "api-client.zsh"),
                              env["ZCURL_TEST_HTTP"] + "/bytes"], env=env, cwd="/",
                             capture_output=True, timeout=10)
     assert result.returncode == 0 and result.stdout == bytes(range(256)) + b"\n\n", result.stderr
@@ -520,12 +543,27 @@ if __name__ == "__main__":
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--valgrind", action="store_true", help="memory-check scripted tests (requires valgrind)")
+    parser.add_argument("--module-dir", type=Path,
+                        help="directory containing the module to test (also used by loader/examples)")
+    parser.add_argument("--ubsan", action="store_true", help="fail on sanitizer reports from any child shell")
     args = parser.parse_args()
     if not 1 <= args.count <= 1000:
         parser.error("--count must be between 1 and 1000")
     if args.valgrind and args.benchmark:
         parser.error("run memory checks and benchmarks separately")
-    with fixture() as (env, plain, tls, temp):
+    if args.ubsan and (args.valgrind or args.benchmark):
+        parser.error("run UBSan separately from Valgrind and benchmarks")
+    if args.module_dir is None:
+        args.module_dir = ROOT / ('build/ubsan' if args.ubsan else 'build')
+    if not (args.module_dir / 'zcurl.so').is_file():
+        parser.error(f'no zcurl.so in {args.module_dir}; build the selected module first')
+    if args.ubsan:
+        symbols = subprocess.run(['nm', '-D', str(args.module_dir / 'zcurl.so')],
+                                 capture_output=True, text=True, check=True, timeout=10)
+        if '__ubsan_handle_' not in symbols.stdout:
+            parser.error('selected module has no UBSan runtime checks; run make ubsan')
+    with fixture(args.module_dir, args.ubsan) as (env, plain, tls, temp):
+        print(f'Testing module: {Path(env["ZCURL_MODULE_PATH"]) / "zcurl.so"}', flush=True)
         if args.valgrind:
             env["ZCURL_TEST_VALGRIND"] = "1"
         integration(env, plain, tls, temp)
@@ -559,7 +597,7 @@ if __name__ == "__main__":
         print(run(env, (ROOT / 'tests' / 'concurrency.zsh').read_text()))
         assert (temp / 'concurrent.bin').read_bytes() == bytes(range(256)) + b'\n\n', 'owned async upload changed'
         batch = subprocess.run(
-            ['zsh', '-df', str(ROOT / 'examples' / 'concurrent.zsh'),
+            ['zsh', '-df', str(Path(env['ZCURL_TEST_ROOT']) / 'examples' / 'concurrent.zsh'),
              env['ZCURL_TEST_HTTP'] + '/parallel/one', env['ZCURL_TEST_HTTP'] + '/parallel/two'],
             env=env, cwd='/', capture_output=True, text=True, timeout=10)
         assert batch.returncode == 0, batch.stderr
@@ -575,3 +613,5 @@ if __name__ == "__main__":
         interrupt_test(env, plain)
         if args.benchmark:
             benchmark(env, tls, args.count)
+    if args.ubsan:
+        print('PASS: UBSan module checks, including loader, examples, completion and signal PTYs')

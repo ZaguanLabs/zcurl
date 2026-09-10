@@ -369,6 +369,7 @@ callback when you need uninterrupted typing.
 ```zsh
 make test        # HTTP/TLS fixtures, API/scoping tests, project loader, PTY signals
 make memcheck    # Valgrind on scripted tests; requires Valgrind
+make ubsan       # separate instrumented module; includes examples and PTY checks
 make benchmark   # local HTTPS comparison with external curl
 ```
 
@@ -377,6 +378,12 @@ removed from their environment. No public service or system trust-store
 changes are needed. The memory check uses two exact dependency-constructor
 suppressions reproduced independently of zcurl; see
 [validation notes](docs/validation.md).
+
+`make ubsan` builds `build/ubsan/zcurl.so` and runs the full suite with fatal
+undefined-behavior checks. It leaves the normal module in place and selects the
+instrumented library for loader/example and interactive tests too. Requires a
+compiler with UBSan, its runtime library, and `nm`; see
+[sanitizer setup and scope](docs/sanitizers.md).
 
 The original prototype's 100-request local HTTPS benchmark measured 15.63 ms
 for the module, 576.91 ms for separate curl processes, and 19.59 ms for one
