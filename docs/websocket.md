@@ -1,4 +1,4 @@
-# Persistent WebSockets (0.14.0-dev)
+# Persistent WebSockets (0.15.0-dev)
 
 `zcurl ws` is an experimental, explicitly driven WebSocket client. It uses
 libcurl for the WS/WSS handshake, TLS, masking, and wire framing. The module
@@ -37,7 +37,7 @@ Options take separate words, only headers repeat, and `--` ends options.
 
 | Operation | Options and behavior |
 | --- | --- |
-| `open` | Explicit `ws://` or `wss://` URL; `-x`/`--proxy URL`, `--noproxy HOSTS`, `--proxy-cacert FILE`, `-c`/`--cacert FILE`, repeated `-H`/`--header FIELD`, `-t`/`--timeout MS` (1..600000, default 10000), `--connect-timeout MS` (1..600000, default 3000), `--max-queue BYTES`, `--max-message BYTES` (each 1..67108864, default 8388608) |
+| `open` | Explicit `ws://` or `wss://` URL; `--subprotocol TOKEN`, `-x`/`--proxy URL`, `--noproxy HOSTS`, `--proxy-cacert FILE`, `-c`/`--cacert FILE`, repeated `-H`/`--header FIELD`, `-t`/`--timeout MS` (1..600000, default 10000), `--connect-timeout MS` (1..600000, default 3000), `--max-queue BYTES`, `--max-message BYTES` (each 1..67108864, default 8388608) |
 | `send` | Copy one frame into the send queue: `-d`/`--data BYTES` (default empty), `--type text\|binary\|ping\|pong` (default text), `--more` for a nonfinal data fragment. Success means accepted, not delivered. No network I/O. |
 | `recv` | Attempt one nonblocking receive; `--max-chunk BYTES` (1..65536, default 65536). Does not flush the send queue. |
 | `poll` | Drive queued sends and receive at most one event; `-t`/`--timeout MS` (0..1000, default 0), `--max-chunk BYTES` (1..65536, default 65536). |
@@ -56,7 +56,43 @@ with the tested HTTP and HTTPS proxies; WSS verifies origin TLS inside the tunne
 [proxy routing](proxy.md#websocket-connections) for authentication and scope.
 `--proxy-cacert FILE` separately supplies trust for an HTTPS proxy, with both
 proxy and origin verification enabled. These options apply only at open.
-Subprotocol negotiation policy is the caller's responsibility; the raw handshake headers are in the open result.
+
+## Required subprotocol
+
+Use `--subprotocol TOKEN` when the application requires one particular protocol:
+
+```zsh
+typeset -A opened
+zcurl ws open events -r opened --subprotocol graphql-transport-ws \
+    -- wss://api.example.com/events || return
+# A successful open guarantees that the server selected graphql-transport-ws.
+```
+
+The option adds one `Sec-WebSocket-Protocol` request header and requires exactly
+one matching value in the final upgrade response. Matching is case-sensitive;
+outer spaces/tabs are trimmed and legacy folded whitespace is handled like
+[header lookup](headers.md). Missing, empty, different, duplicate, quoted or
+comma-separated selections fail. Informational and proxy CONNECT headers cannot
+satisfy the requirement. Generated headers stay out of proxy CONNECT requests.
+
+The token must be 1..255 ASCII bytes using HTTP token characters. Spaces, commas,
+quotes, non-ASCII bytes and embedded NUL are rejected before I/O. The option is
+valid only on `open`, takes a separate value and cannot repeat. Combining it with
+any manual `Sec-WebSocket-Protocol` header is rejected in either option order,
+including an empty suppression header and differently cased field names.
+
+A rejected selection returns 8 (`CURLE_WEIRD_SERVER_REPLY`) with
+`error_kind=protocol`, `event=error`, `complete=0` and an empty state. The upgrade's
+status and raw headers remain available for diagnosis. The connection is released
+and no handle is retained. Transport or TLS failures detected before selection
+validation keep their ordinary errors. Success keeps the existing result shape;
+retain the open snapshot if the negotiated header is needed later.
+
+This is an opt-in application requirement: RFC 6455 also permits a server to
+select no subprotocol. Without this option, manual headers retain their existing
+behavior and negotiation policy remains the caller's responsibility. Offering
+multiple alternatives or allowing fallback is outside this option's contract.
+See [RFC 6455 handshake negotiation](https://www.rfc-editor.org/rfc/rfc6455.html#section-4.2.2).
 
 ## Events and results
 

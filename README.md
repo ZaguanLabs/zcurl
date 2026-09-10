@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.14.0-dev** is intended for trying in a project: methods, request
+Version **0.15.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -223,6 +223,10 @@ See the [WebSocket contract](docs/websocket.md) for all operations, fragmentatio
 backpressure, ping/pong, result fields and close/error lifecycle. Each handle
 belongs to the shell that loaded the module. An inherited forked worker cannot
 use it; a worker must exec a fresh Zsh process and load its own module.
+
+Applications that require a particular negotiated protocol can open with
+`--subprotocol TOKEN`. A successful open then guarantees an exact server
+selection; see [required subprotocols](docs/websocket.md#required-subprotocol).
 
 ## Options
 

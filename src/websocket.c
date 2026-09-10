@@ -256,13 +256,33 @@ ws_handshake(struct websocket *w, long timeout)
     }
 }
 
+/* Apply the same final-response selection as saved-header lookup. A required
+ * subprotocol must occur exactly once and match the offered token verbatim. */
+static CURLcode
+ws_check_subprotocol(struct buffer *handshake, const char *subprotocol)
+{
+    char *storage = malloc(handshake->len + 1);
+    char **values = malloc((handshake->len / 3 + 1) * sizeof(*values));
+    size_t count = 0;
+    CURLcode rc = CURLE_OUT_OF_MEMORY;
+    if (storage && values) {
+        rc = parse_headers(handshake->data ? handshake->data : "", handshake->len,
+                           "Sec-WebSocket-Protocol", 0, storage, values, &count) &&
+             count == 1 && !strcmp(values[0], subprotocol) ? CURLE_OK : CURLE_WEIRD_SERVER_REPLY;
+    }
+    free(storage);
+    free(values);
+    return rc;
+}
+
 static struct websocket *
-ws_open(const char *name, struct request *r, long max_queue, long max_message)
+ws_open(const char *name, struct request *r, long max_queue, long max_message, const char *subprotocol)
 {
     struct websocket *w = calloc(1, sizeof(*w));
     CURLcode rc = CURLE_OUT_OF_MEMORY;
     long status = 0;
     char *url = NULL;
+    const char *failure_kind = NULL;
     if (!w) {
         set_error("memory", "could not allocate WebSocket handle", 27);
         return NULL;
@@ -306,6 +326,13 @@ ws_open(const char *name, struct request *r, long max_queue, long max_message)
     curl_easy_getinfo(w->easy, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_getinfo(w->easy, CURLINFO_EFFECTIVE_URL, &url);
     if (url) replace_text(&effective_url, url, strlen(url));
+    if (rc == CURLE_OK && subprotocol) {
+        rc = ws_check_subprotocol(&w->handshake, subprotocol);
+        if (rc == CURLE_WEIRD_SERVER_REPLY) {
+            failure_kind = "protocol";
+            strcpy(w->diagnostic, "server did not select the required WebSocket subprotocol exactly once");
+        }
+    }
 done:
     http_status = status;
     curl_code = rc;
@@ -317,7 +344,7 @@ done:
         ws_event_set("open");
         return w;
     }
-    set_error(w->handshake.failure == BUFFER_LIMIT ? "header-limit" :
+    set_error(failure_kind ? failure_kind : w->handshake.failure == BUFFER_LIMIT ? "header-limit" :
               rc == CURLE_OUT_OF_MEMORY || w->handshake.failure == BUFFER_MEMORY ? "memory" : "transport",
               w->diagnostic[0] ? w->diagnostic : curl_easy_strerror(rc), (int)rc);
     ws_event_set("error");
@@ -484,7 +511,7 @@ websocket_command(char **args)
     static const char *const operations[] = {"open", "send", "recv", "poll", "close", "drop", "info"};
     struct request r = {0};
     struct websocket *w = NULL, *p;
-    char *op, *name, *type = "text", *reason = "";
+    char *op, *name, *type = "text", *reason = "", *subprotocol = NULL;
     size_t data_len = 0, reason_len = 0, count = 0;
     char *data = "";
     long timeout = 0, max_queue = BODY_LIMIT, max_message = BODY_LIMIT, chunk = WS_CHUNK, close_code = 1000;
@@ -523,6 +550,7 @@ websocket_command(char **args)
         else if (!strcmp(arg, "--proxy") || !strcmp(arg, "-x")) { bit = 8192u; allowed = operation == WS_OPEN; }
         else if (!strcmp(arg, "--noproxy")) { bit = 16384u; allowed = operation == WS_OPEN; }
         else if (!strcmp(arg, "--proxy-cacert")) { bit = 32768u; allowed = operation == WS_OPEN; }
+        else if (!strcmp(arg, "--subprotocol")) { bit = 65536u; allowed = operation == WS_OPEN; }
         else goto usage;
         if (!allowed || (bit != 4u && (seen & bit))) goto usage;
         seen |= bit;
@@ -547,6 +575,9 @@ websocket_command(char **args)
         case 8192u: r.proxy = value; break;
         case 16384u: r.noproxy = value; break;
         case 32768u: if (!*value) goto usage; r.proxy_ca = value; break;
+        case 65536u:
+            if (strlen(value) > 255 || !token(value, strlen(value))) goto usage;
+            subprotocol = value; break;
         }
     }
     for (p = websockets; p; p = p->next) {
@@ -557,7 +588,18 @@ websocket_command(char **args)
     if (operation == WS_OPEN) {
         if (w || count >= WS_HANDLES || !r.url ||
             (strncasecmp(r.url, "ws://", 5) && strncasecmp(r.url, "wss://", 6))) goto usage;
-        w = ws_open(name, &r, max_queue, max_message);
+        if (subprotocol) {
+            struct curl_slist *h;
+            char field[sizeof("Sec-WebSocket-Protocol: ") + 255];
+            for (h = r.headers; h; h = h->next) {
+                char *colon = strchr(h->data, ':');
+                if (colon && header_name_equal(h->data, (size_t)(colon - h->data),
+                                               "Sec-WebSocket-Protocol", 22)) goto usage;
+            }
+            snprintf(field, sizeof(field), "Sec-WebSocket-Protocol: %s", subprotocol);
+            if (!add_header(&r, field)) goto usage;
+        }
+        w = ws_open(name, &r, max_queue, max_message, subprotocol);
         goto done;
     }
     if (!w) goto usage;

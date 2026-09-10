@@ -128,6 +128,7 @@ case $mode:$operation in
     specs+=(
       '(-c --cacert)'{-c,--cacert}'[PEM trust file]:CA file:_files'
       '*'{-H,--header}'[add a handshake header]:header field:'
+      '--subprotocol[require one negotiated WebSocket subprotocol]:subprotocol token (1..255 ASCII bytes):'
       '(-t --timeout)'{-t,--timeout}'[handshake timeout, default 10000 ms]:milliseconds (1..600000):'
       '--connect-timeout[connection timeout, default 3000 ms]:milliseconds (1..600000):'
       '--max-queue[send queue limit, default 8388608 bytes]:bytes (1..67108864):'

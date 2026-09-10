@@ -1,4 +1,4 @@
-# Native Zsh completion (0.14.0-dev)
+# Native Zsh completion (0.15.0-dev)
 
 `completions/_zcurl` provides optional compsys completion for the module's CLI.
 It describes arguments without invoking `zcurl`, opening connections, driving
@@ -45,6 +45,8 @@ your startup configuration.
   works when the module or either array feature is absent.
 - Standard HTTP methods and WebSocket frame types. With `--head`, method
   suggestions are limited to HEAD; a request body excludes HEAD suggestions.
+- `--subprotocol` only on `ws open`, with duplicate suppression and a literal
+  token argument. Completion does not guess application protocols.
 - Mutual exclusions among `--head`, literal bodies and file uploads. Repeated
   `--header` remains available. Short and long aliases suppress each other.
 - `--compressed` for synchronous HTTP and `http submit`, with duplicate

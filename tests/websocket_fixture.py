@@ -31,10 +31,28 @@ def serve(h):
         assert h.headers.get('Authorization') == 'Bearer fixture-token', 'handshake authentication missing'
         assert 'Proxy-Authorization' not in h.headers, 'proxy credentials reached origin'
     accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+    offered = h.headers.get_all('Sec-WebSocket-Protocol', [])
+    if h.path.startswith('/ws-protocol/'):
+        assert offered == ['fixture.v1'], offered
+    if h.path in ('/ws-protocol/early', '/ws-protocol/early-only'):
+        h.wfile.write(b'HTTP/1.1 103 Early Hints\r\nSec-WebSocket-Protocol: fixture.v1\r\n\r\n')
     h.send_response(101)
     h.send_header("Upgrade", "websocket")
     h.send_header("Connection", "Upgrade")
     h.send_header("Sec-WebSocket-Accept", accept)
+    if h.path in ('/ws-protocol/match', '/ws-protocol/early', '/ws-protocol/duplicate'):
+        h.send_header('Sec-WebSocket-Protocol', 'fixture.v1')
+    if h.path == '/ws-protocol/duplicate':
+        h.send_header('Sec-WebSocket-Protocol', 'fixture.v1')
+    selections = {'wrong': 'fixture.v2', 'case': 'Fixture.v1', 'empty': '',
+                  'list': 'fixture.v1, fixture.v2', 'quoted': '"fixture.v1"',
+                  'spacing': ' \tfixture.v1\t ', 'folded': '\r\n\tfixture.v1'}
+    selection = selections.get(h.path.removeprefix('/ws-protocol/'))
+    if selection is not None:
+        h.send_header('sEc-WeBsOcKeT-pRoToCoL', selection)
+    if h.path == '/ws-protocol-echo':
+        assert len(offered) == 1, offered
+        h.send_header('Sec-WebSocket-Protocol', offered[0])
     h.end_headers()
     h.close_connection = True
     h.connection.settimeout(60)

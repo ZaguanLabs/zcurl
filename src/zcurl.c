@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.14.0-dev"
+#define ZCURL_VERSION "0.15.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -851,9 +851,9 @@ help(void)
          "Results are in zcurl_* parameters, and optionally ARRAY. No body is printed.");
 }
 
+#include "http_headers.c"
 #include "websocket.c"
 #include "http_async.c"
-#include "http_headers.c"
 
 static int
 bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))

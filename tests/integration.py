@@ -627,6 +627,11 @@ if __name__ == "__main__":
         ws_result = run(env, (ROOT / 'tests' / 'websocket.zsh').read_text())
         assert ws_result.startswith('PASS: WS/WSS'), 'WebSocket script ended before completing its assertions'
         print(ws_result)
+        before = plain.request_count + tls.request_count
+        protocol_result = run(env, (ROOT / 'tests' / 'websocket-protocol.zsh').read_text())
+        assert protocol_result.startswith('PASS: required WebSocket subprotocol'), protocol_result
+        assert plain.request_count + tls.request_count == before + 29, 'unexpected subprotocol request count'
+        print(protocol_result)
         assert not plain.ws_errors and not tls.ws_errors, (plain.ws_errors, tls.ws_errors)
         assert any(op == 10 and data == b'heartbeat\0' for _, op, _, data in plain.ws_frames), 'automatic pong missing'
         assert any(op == 10 and data == b'unsolicited' for _, op, _, data in tls.ws_frames), 'explicit pong missing'

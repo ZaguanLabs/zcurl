@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.14.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.15.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -79,6 +79,8 @@ requests turn out to be the main need.
    and separate connections per handle.
    HTTPS proxies now have independent CA-file configuration and tests for proxy
    and origin certificate verification across HTTP and WS/WSS.
+   WebSocket callers can require one exact subprotocol at open; offering multiple
+   alternatives and allowing negotiation fallback remain caller policy.
 4. **Forks and lifecycle.** The current PID guard is an experimental restriction.
    Children need explicitly independent state; merely duplicating a handle
    does not make shared TLS sockets safe. Connection sockets and retained file

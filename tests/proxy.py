@@ -25,6 +25,7 @@ class Proxy(http.server.ThreadingHTTPServer):
         self.stopping = threading.Event()
         self.require_auth = False
         self.reject_connect = False
+        self.connect_subprotocol = None
 
     def handle_error(self, request, client_address):
         import traceback
@@ -65,6 +66,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         with socket.create_connection((target.hostname, target.port), timeout=5) as upstream:
             self.send_response(200, 'Connection established')
+            if self.server.connect_subprotocol is not None:
+                self.send_header('Sec-WebSocket-Protocol', self.server.connect_subprotocol)
             self.end_headers()
             self.close_connection = True
             self.connection.settimeout(5)
@@ -191,7 +194,7 @@ def test(env, plain, temp, run):
         ''', 1)
         method, _, headers = server.records[before]
         assert method == 'CONNECT'
-        assert not {'authorization', 'x-origin'} & {k.lower() for k in headers}
+        assert not {'authorization', 'x-origin', 'sec-websocket-protocol'} & {k.lower() for k in headers}
         origin_headers = dict(json.loads((temp / 'proxy-inspect.json').read_text())['headers'])
         assert origin_headers['Authorization'] == 'Bearer fixture-only'
         assert origin_headers['X-Origin'] == 'private'
@@ -286,7 +289,7 @@ def test_websockets(env, plain, run, setup):
             assert len(records) == count, (source, records)
             for method, _, headers in records:
                 assert method == 'CONNECT', records
-                assert not {'authorization', 'x-origin'} & {k.lower() for k in headers}, headers
+                assert not {'authorization', 'x-origin', 'sec-websocket-protocol'} & {k.lower() for k in headers}, headers
 
         for endpoint in ('$ws_url', '$wss_url'):
             opening = f'zcurl ws open via -c "$ZCURL_TEST_CA" "{endpoint}/ws"'
@@ -307,6 +310,23 @@ def test_websockets(env, plain, run, setup):
         server.require_auth = True
         authenticated = proxy_env['ZCURL_TEST_PROXY'].replace('http://', 'http://fixture:secret@')
         check(Path(__file__).with_name('websocket-proxy.zsh').read_text(), 4, AUTH_PROXY=authenticated)
+        server.connect_subprotocol = 'fixture.v1'
+        check('''
+            for url in "$ws_url" "$wss_url"; do
+                zcurl ws open required --proxy "$AUTH_PROXY" -c "$ZCURL_TEST_CA" \
+                    --subprotocol fixture.v1 "$url/ws-protocol/match"
+                zcurl ws drop required
+            done
+        ''', 2, AUTH_PROXY=authenticated)
+        check('''
+            for url in "$ws_url" "$wss_url"; do
+                if zcurl ws open rejected --proxy "$AUTH_PROXY" -c "$ZCURL_TEST_CA" \
+                    --subprotocol fixture.v1 "$url/ws-protocol/missing"; then exit 1; else check $? 8; fi
+                check $zcurl_error_kind protocol
+                check ${#zcurl_ws_handles} 0
+            done
+        ''', 2, AUTH_PROXY=authenticated)
+        server.connect_subprotocol = None
         check('''
             if zcurl ws open denied "$ws_url/ws"; then exit 1; fi
             check $zcurl_error_kind transport
@@ -444,9 +464,16 @@ def test_https_proxy(env, plain, temp, run, setup):
             }
         '''
         check(wrapper + source, 4, AUTH_PROXY=authenticated)
+        check('''
+            for url in "$ws_url" "$wss_url"; do
+                zcurl ws open required --proxy "$AUTH_PROXY" --proxy-cacert "$PROXY_CA" \
+                    -c "$ZCURL_TEST_CA" --subprotocol fixture.v1 "$url/ws-protocol/match"
+                zcurl ws drop required
+            done
+        ''', 2, AUTH_PROXY=authenticated)
         for method, _, headers in server.records[before:]:
             assert method == 'CONNECT'
-            assert not {'authorization', 'x-origin'} & {k.lower() for k in headers}
+            assert not {'authorization', 'x-origin', 'sec-websocket-protocol'} & {k.lower() for k in headers}
         server.require_auth = False
         for flags in ('', '--cacert "$PROXY_CA"'):
             check(f'''if zcurl ws open bad {flags} "$ws_url/ws"; then exit 1; else check $? 60; fi

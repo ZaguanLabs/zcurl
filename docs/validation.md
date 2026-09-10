@@ -1,4 +1,4 @@
-# Validation of 0.14.0-dev
+# Validation of 0.15.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -125,7 +125,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 112 resulting command buffers, including:
+completion widget. The test checks 118 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -260,6 +260,16 @@ the validated scope. See [the contract](concurrency.md).
 
 ## WebSocket coverage
 
+- Required single-subprotocol negotiation over WS/WSS and HTTP/HTTPS proxies;
+  exact token matching, final-response selection, whitespace handling, rejection
+  of absent/mismatched/duplicate/empty/list/quoted selections, and no retained
+  handle after failure. Informational and CONNECT headers cannot satisfy a
+  missing final selection; the offered header stays out of CONNECT requests.
+- Token length/character validation, conflicting manual headers in either order,
+  operation restrictions and unchanged manual-header behavior. Origin request
+  counts verify that parser failures cause no I/O; concurrent handles and
+  function-local tokens preserve independent ownership.
+
 `make test` and `make memcheck` also run a Python standard-library RFC 6455
 fixture, independently encoding and checking wire frames. The 0.3.0-dev run
 passed both targets and a C syntax check with `-Wall -Wextra -Werror`. The
@@ -298,7 +308,7 @@ monotonic handshake deadline in addition to libcurl's configured timeouts.
 Backend blocking caveats remain; this is not a hard real-time guarantee.
 
 The WS build minimum is now libcurl 8.16.0; this environment's 8.21.0 is the
-only version validated here. Proxy/subprotocol policy, other TLS backends,
+only version validated here. Broader proxy and subprotocol negotiation policies, other TLS backends,
 platforms and libcurl versions, ZLE integration, and the Blade application
 protocol still require integration testing. See [the API contract](websocket.md).
 
