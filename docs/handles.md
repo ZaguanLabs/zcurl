@@ -6,7 +6,7 @@ The native module exposes read-only special indexed arrays:
 | --- | --- |
 | `zcurl_http_handles` | All retained concurrent HTTP request names, in submission order |
 | `zcurl_ws_handles` | All retained WebSocket names, in successful open order |
-| `zcurl_http_sessions` | Named synchronous HTTP sessions, in creation order; see [session lifecycle](sessions.md) |
+| `zcurl_http_sessions` | Named HTTP sessions, in creation order; see [session lifecycle](sessions.md) |
 
 Each expansion reads the current registry without invoking `zcurl`, touching
 the network, processing deadlines, or changing transfer results. The arrays

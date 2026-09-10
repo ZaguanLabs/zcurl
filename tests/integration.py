@@ -477,11 +477,11 @@ def interrupt_test(env, plain):
         os.write(fd, b'zcurl http info active; print -r -- "HTTP_WAIT_PRESERVED:$?:$zcurl_state"\n')
         wait_for(b"\r\nHTTP_WAIT_PRESERVED:0:pending\r\n", timeout=2)
         assert time.monotonic() - start < 1.5, 'HTTP wait cancellation was delayed'
-        os.write(fd, b'zcurl http submit any_other -- "$ZCURL_TEST_HTTP/hang"; print -r -- HTTP_ANY_BEGIN; zcurl http wait-any active any_other --timeout 600000\n')
+        os.write(fd, b'zcurl session create async_other; zcurl http submit any_other --session async_other -- "$ZCURL_TEST_HTTP/hang"; print -r -- HTTP_ANY_BEGIN; zcurl http wait-any active any_other --timeout 600000\n')
         wait_for(b"\r\nHTTP_ANY_BEGIN\r\n")
         start = time.monotonic()
         os.write(fd, b'\x03')
-        os.write(fd, b'zcurl http info any_other; print -r -- "HTTP_ANY_PRESERVED:$?:$zcurl_state"; zcurl http drop any_other\n')
+        os.write(fd, b'zcurl http info any_other; print -r -- "HTTP_ANY_PRESERVED:$?:$zcurl_state"; zcurl http drop any_other; zcurl session drop async_other\n')
         wait_for(b"\r\nHTTP_ANY_PRESERVED:0:pending\r\n", timeout=2)
         assert time.monotonic() - start < 1.5, 'HTTP wait-any cancellation was delayed'
         os.write(fd, b'TRAPUSR1() { zcurl http cancel active; print -r -- "HTTP_REENTRY:$?"; zmodload -u zcurl; print -r -- "HTTP_UNLOAD:$?"; unset response; typeset -g response=changed; }; print -r -- HTTP_TRAP_READY\n')
@@ -618,6 +618,28 @@ if __name__ == "__main__":
             assert reply['method'] == 'GET' and reply['body'] == ''
             assert 'authorization' not in {k.lower() for k, _ in reply['headers']}
         assert (temp / 'session-output.bin').read_bytes() == b'file\0session\n\n'
+        tls_before = (tls.connections, tls.request_count)
+        concurrent_sessions = run(env, (ROOT / 'tests' / 'session-concurrency.zsh').read_text())
+        assert concurrent_sessions.startswith('PASS: named concurrent sessions'), concurrent_sessions
+        print(concurrent_sessions)
+        assert (tls.connections - tls_before[0], tls.request_count - tls_before[1]) == (6, 15), 'named concurrent pools did not preserve independent reuse'
+        assert (temp / 'session-job-output.bin').read_bytes() == b'named\0concurrent\n\n'
+        before = plain.request_count
+        isolated = run(env, LOAD + '''
+            setopt errexit
+            zcurl session create isolated
+            zcurl http submit deferred --session isolated "$ZCURL_TEST_HTTP/tiny"
+            zcurl --session isolated "$ZCURL_TEST_HTTP/tiny"
+            zcurl http info deferred
+            [[ $zcurl_state == pending ]] || exit 1
+            zcurl http drop deferred
+            zcurl session drop isolated
+            zmodload -u zcurl
+            print 'PASS: synchronous calls leave concurrent jobs undriven'
+        ''')
+        assert isolated.startswith('PASS: synchronous calls'), isolated
+        assert plain.request_count == before + 1, 'synchronous request drove a concurrent job in the same session'
+        print(isolated)
         before = plain.request_count
         print(run(env, (ROOT / 'tests' / 'handles.zsh').read_text()))
         assert plain.request_count == before + 4, 'handle discovery caused unexpected HTTP I/O'
@@ -632,7 +654,8 @@ if __name__ == "__main__":
         run(env, LOAD + '''
             setopt errexit
             typeset -A response
-            zcurl http submit untouched -- "$ZCURL_TEST_HTTP/tiny"
+            zcurl session create deferred
+            zcurl http submit untouched --session deferred -- "$ZCURL_TEST_HTTP/tiny"
             zcurl http cancel untouched
             zcurl http collect untouched -r response && exit 1
             [[ $response[state] == cancelled && $response[bytes] == 0 ]] || exit 2

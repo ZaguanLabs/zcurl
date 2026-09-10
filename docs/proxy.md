@@ -65,8 +65,9 @@ Proxy URLs may contain credentials using libcurl's URL syntax. The fixture tests
 Basic proxy authentication and verifies that proxy authorization is absent from
 the tunneled origin request. There is no separate proxy-header or authentication
 method option. Per-request routing alone does not separate connection and
-authentication caches. Synchronous callers can select independent pools with
-[named sessions](sessions.md); concurrent jobs still use their shared pool.
+authentication caches. Synchronous requests and concurrent submissions can select independent pools
+with [named sessions](sessions.md). Each session has separate synchronous and
+concurrent pools.
 
 For an HTTPS proxy with a private CA, set `--proxy-cacert FILE`:
 

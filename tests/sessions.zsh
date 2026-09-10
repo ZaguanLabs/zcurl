@@ -70,7 +70,8 @@ check ${#response} 13
 # An unknown session fails before descriptor preparation and never falls back.
 expect_code 2 zcurl --session unknown --output-fd 999999 "$ZCURL_TEST_HTTP/tiny"
 check $zcurl_error_kind state
-expect_code 2 zcurl http submit invalid --session alpha "$ZCURL_TEST_HTTP/tiny"
+expect_code 2 zcurl http submit invalid --session unknown --output-fd 999999 "$ZCURL_TEST_HTTP/tiny"
+check $zcurl_error_kind state
 check ${#zcurl_http_handles} 0
 expect_code 2 zcurl ws open invalid --session alpha "${ZCURL_TEST_HTTP/http:/ws:}/ws"
 for invalid in '' 'a-b' '1name' 'name[x]' $'bad\0tail' ø; do

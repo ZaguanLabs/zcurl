@@ -1,4 +1,4 @@
-/* Included by zcurl.c. Explicitly driven HTTP jobs share one connection pool.
+/* Included by zcurl.c. Explicitly driven HTTP jobs share a pool per session.
  * All retained pointers belong to a job or libcurl, never to a builtin's heap. */
 #define HTTP_JOBS 32
 #define HTTP_STORAGE (128u * 1024 * 1024)
@@ -8,6 +8,7 @@ struct http_job {
     struct http_job *next;
     char *name;
     CURL *easy;
+    struct http_session *session;
     struct curl_slist *request_headers;
     struct buffer body, headers;
     struct http_input input;
@@ -18,7 +19,6 @@ struct http_job {
     CURLcode code;
 };
 static struct http_job *http_jobs;
-static CURLM *http_pool;
 static size_t http_reserved;
 
 static struct http_job *
@@ -39,8 +39,9 @@ http_destroy(struct http_job *j)
         *p = j->next;
         http_reserved -= j->reserved;
     }
-    if (j->attached) curl_multi_remove_handle(http_pool, j->easy);
+    if (j->attached) curl_multi_remove_handle(j->session->http_multi, j->easy);
     if (j->easy) curl_easy_cleanup(j->easy);
+    if (j->session) j->session->http_jobs--;
     close_input(&j->input);
     close_output(&j->body);
     curl_slist_free_all(j->request_headers);
@@ -54,20 +55,18 @@ static void
 http_cleanup(void)
 {
     while (http_jobs) http_destroy(http_jobs);
-    if (http_pool) curl_multi_cleanup(http_pool);
-    http_pool = NULL;
     http_reserved = 0;
 }
 
-/* A multi-stack failure invalidates every attached transfer, but completed
- * records remain collectable. Subsequent submits get a fresh pool. */
+/* A multi-stack failure invalidates attached transfers in that session only;
+ * completed records remain collectable. Subsequent submits get a fresh pool. */
 static void
-http_pool_fail(CURLMcode mc)
+http_pool_fail(struct http_session *s, CURLMcode mc)
 {
     struct http_job *j;
     for (j = http_jobs; j; j = j->next) {
-        if (!j->attached) continue;
-        curl_multi_remove_handle(http_pool, j->easy);
+        if (!j->attached || j->session != s) continue;
+        curl_multi_remove_handle(s->http_multi, j->easy);
         j->attached = 0;
         j->done = 1;
         j->code = CURLE_FAILED_INIT;
@@ -75,8 +74,8 @@ http_pool_fail(CURLMcode mc)
         close_output(&j->body);
         snprintf(j->diagnostic, sizeof(j->diagnostic), "libcurl multi: %s", curl_multi_strerror(mc));
     }
-    curl_multi_cleanup(http_pool);
-    http_pool = NULL;
+    curl_multi_cleanup(s->http_multi);
+    s->http_multi = NULL;
     set_error("transport", "concurrent HTTP pool failed; collect affected requests", 2);
     curl_code = CURLE_FAILED_INIT;
     replace_text(&event_text, "error", 5);
@@ -85,9 +84,9 @@ http_pool_fail(CURLMcode mc)
 static int
 http_finish(struct http_job *j, CURLcode code)
 {
-    CURLMcode mc = curl_multi_remove_handle(http_pool, j->easy);
+    CURLMcode mc = curl_multi_remove_handle(j->session->http_multi, j->easy);
     if (mc != CURLM_OK) {
-        http_pool_fail(mc);
+        http_pool_fail(j->session, mc);
         return 0;
     }
     j->attached = 0;
@@ -112,6 +111,7 @@ static struct http_job *
 http_submit(const char *name, struct request *r)
 {
     struct http_job *j, **tail = &http_jobs;
+    struct http_session *s = r->session_name ? find_session(r->session_name) : &default_session;
     size_t count = 0, reserve = (r->has_output ? 0 : (size_t)r->max_body) + HEADER_LIMIT;
     size_t sizes[] = {r->data_len, r->header_bytes, strlen(r->url) + 1,
                      r->ca ? strlen(r->ca) + 1 : 0,
@@ -122,6 +122,10 @@ http_submit(const char *name, struct request *r)
     size_t i;
     CURLcode rc;
     CURLMcode mc;
+    if (!s) {
+        set_error("state", "unknown HTTP session", 2);
+        return NULL;
+    }
     for (j = http_jobs; j; j = j->next) { count++; tail = &j->next; }
     if (http_find(name)) {
         set_error("state", "HTTP handle already exists; collect or drop it first", 2);
@@ -134,14 +138,16 @@ http_submit(const char *name, struct request *r)
     if (count >= HTTP_JOBS || reserve > HTTP_STORAGE - http_reserved) goto limit;
     j = calloc(1, sizeof(*j));
     if (!j) goto memory;
+    j->session = s;
+    s->http_jobs++;
     j->name = strdup(name);
     j->easy = curl_easy_init();
     j->body.limit = (size_t)r->max_body;
     j->headers.limit = HEADER_LIMIT;
     j->fail_http = r->fail_http;
     j->reserved = reserve;
-    if (!http_pool) http_pool = curl_multi_init();
-    if (!j->name || !j->easy || !http_pool) {
+    if (!s->http_multi) s->http_multi = curl_multi_init();
+    if (!j->name || !j->easy || !s->http_multi) {
         http_destroy(j);
         goto memory;
     }
@@ -156,7 +162,7 @@ http_submit(const char *name, struct request *r)
         http_destroy(j);
         return NULL;
     }
-    mc = curl_multi_add_handle(http_pool, j->easy);
+    mc = curl_multi_add_handle(s->http_multi, j->easy);
     if (mc != CURLM_OK) {
         set_error("transport", curl_multi_strerror(mc), 2);
         http_destroy(j);
@@ -187,6 +193,55 @@ http_selected(struct http_job *job, struct http_job **targets, size_t count)
     return 0;
 }
 
+/* Poll every pool in one wait. The first pool contributes its descriptors and
+ * timer through curl_multi_poll; the others contribute extra descriptors and
+ * shorten the timeout. No transfer is driven while these arrays are built. */
+static int
+http_wait_pools(struct http_session **pools, size_t count, int timeout)
+{
+    struct curl_waitfd *fds = NULL;
+    unsigned int capacity = 0, used = 0, counts[HTTP_SESSIONS + 1];
+    size_t i;
+    CURLMcode mc;
+    for (i = 1; i < count; ++i) {
+        long timer = -1;
+        mc = curl_multi_timeout(pools[i]->http_multi, &timer);
+        if (mc != CURLM_OK) goto multi_error;
+        if (timer >= 0 && timer < timeout) timeout = (int)timer;
+        mc = curl_multi_waitfds(pools[i]->http_multi, NULL, 0, &counts[i]);
+        if (mc != CURLM_OK) goto multi_error;
+        if (counts[i] > UINT_MAX - capacity) goto memory;
+        capacity += counts[i];
+    }
+    if (capacity) {
+        if (SIZE_MAX / capacity < sizeof(*fds)) goto memory;
+        fds = malloc((size_t)capacity * sizeof(*fds));
+        if (!fds) goto memory;
+        for (i = 1; i < count; ++i) {
+            unsigned int actual = 0;
+            if (!counts[i]) continue;
+            mc = curl_multi_waitfds(pools[i]->http_multi, fds + used, counts[i], &actual);
+            if (mc != CURLM_OK) goto multi_error;
+            used += actual;
+        }
+    }
+    i = 0;
+    mc = curl_multi_poll(pools[0]->http_multi, fds, used, timeout, NULL);
+    if (mc != CURLM_OK) goto multi_error;
+    free(fds);
+    return 1;
+multi_error:
+    free(fds);
+    http_pool_fail(pools[i], mc);
+    return 0;
+memory:
+    free(fds);
+    set_error("memory", "could not allocate HTTP polling descriptors; requests remain available", 27);
+    curl_code = CURLE_OUT_OF_MEMORY;
+    replace_text(&event_text, "error", 5);
+    return 0;
+}
+
 /* Return a retained completion without consuming it. Targets select wait
  * semantics: drive every job, but ignore unrelated completions and continue
  * until one target finishes or the caller's deadline/signal stops the wait. */
@@ -198,6 +253,8 @@ http_drive(long timeout, struct http_job **targets, size_t count)
     replace_text(&event_text, "idle", 4);
     do {
         struct http_job *j, *ready = NULL;
+        struct http_session *pools[HTTP_SESSIONS + 1];
+        size_t pool_count = 0, i;
         int stop, running = 0, remaining;
         int64_t now, wait_ms;
         CURLMcode mc;
@@ -217,12 +274,20 @@ http_drive(long timeout, struct http_job **targets, size_t count)
                 snprintf(j->diagnostic, sizeof(j->diagnostic), "HTTP request exceeded its submission deadline");
                 if (!http_finish(j, CURLE_OPERATION_TIMEDOUT)) return NULL;
             }
-            if (!j->done) j->started = 1;
+            if (!j->done) {
+                j->started = 1;
+                for (i = 0; i < pool_count; ++i)
+                    if (pools[i] == j->session) break;
+                if (i == pool_count) pools[pool_count++] = j->session;
+            }
         }
-        if (http_pool) {
-            mc = curl_multi_perform(http_pool, &running);
-            if (mc != CURLM_OK) { http_pool_fail(mc); return NULL; }
-            while ((msg = curl_multi_info_read(http_pool, &remaining))) {
+        for (i = 0; i < pool_count; ++i) {
+            int active = 0;
+            struct http_session *s = pools[i];
+            mc = curl_multi_perform(s->http_multi, &active);
+            if (mc != CURLM_OK) { http_pool_fail(s, mc); return NULL; }
+            running += active;
+            while ((msg = curl_multi_info_read(s->http_multi, &remaining))) {
                 CURLcode code;
                 if (msg->msg != CURLMSG_DONE) continue;
                 for (j = http_jobs; j; j = j->next)
@@ -250,8 +315,7 @@ http_drive(long timeout, struct http_job **targets, size_t count)
         /* A different request's deadline may have expired during this step.
          * Process it without treating it as the selected wait's deadline. */
         if (wait_ms <= 0) continue;
-        mc = curl_multi_poll(http_pool, NULL, 0, wait_ms > 100 ? 100 : (int)wait_ms, NULL);
-        if (mc != CURLM_OK) { http_pool_fail(mc); return NULL; }
+        if (!http_wait_pools(pools, pool_count, wait_ms > 100 ? 100 : (int)wait_ms)) return NULL;
     } while (count || ++steps < HTTP_STEPS);
     return NULL;
 }
@@ -356,7 +420,7 @@ http_command(char **args)
         replace_text(&handle_text, name, strlen(name));
     }
     if (!strcmp(op, "submit")) {
-        if (parse_request(args, &r, 0) && (j = http_submit(name, &r))) {
+        if (parse_request(args, &r) && (j = http_submit(name, &r))) {
             curl_code = CURLE_OK;
             http_snapshot(j, "submitted");
         }

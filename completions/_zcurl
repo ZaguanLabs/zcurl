@@ -113,9 +113,9 @@ case $mode:$operation in
       '--compressed[negotiate and decode HTTP content compression]'
       '--max-body[response limit, default 8388608 bytes]:bytes (1..67108864):'
       '--output-fd[write the response directly to a regular file]:writable regular-file descriptor:'
+      '--session[use an independent HTTP pool]:HTTP session:->http-sessions'
     )
     if [[ $operation == request ]]; then
-      specs+=( '--session[use an independent synchronous HTTP pool]:HTTP session:->http-sessions' )
       specs+=( '1:URL or command:->top' )
       if (( $#words == 2 )); then
         specs+=( '(- : *)--help[show usage]' '(- : *)--version[show versions]'
@@ -183,7 +183,7 @@ case $state in
   top)
     if (( CURRENT == 2 )); then
       operations=( 'http:concurrent HTTP requests' 'ws:persistent WebSockets' 'headers:look up response header values'
-        'session:manage independent synchronous HTTP pools' )
+        'session:manage independent HTTP pools' )
       _describe -t commands 'command' operations
     fi
     _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https://

@@ -1,4 +1,4 @@
-# Validation of 0.17.0-dev
+# Validation of 0.18.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -93,7 +93,7 @@ descriptor opened internally by libcurl backends. See [the scope](descriptors.md
 
 Loopback HTTP and HTTPS proxies are covered with OpenSSL. See [routing and limitations](proxy.md).
 
-## Named synchronous HTTP sessions
+## Named HTTP sessions
 
 - Independent warm connections for two named pools and the default pool; targeted
   reset/drop keeps the other pools warm. Origin connection/request counters
@@ -107,6 +107,14 @@ Loopback HTTP and HTTPS proxies are covered with OpenSSL. See [routing and limit
   recovery and rejection of session drop from a trap during a transfer.
 - Completion discovers session names without calling `zcurl` and handles
   disabled discovery, dropped names and module unload.
+
+Concurrent session tests also cover HTTP/TLS response barriers across named and
+default pools, independent reuse checked by origin connection/request counts,
+all 17 pools under the shared 32-job cap, binary file output, deadline failure in
+one pool while another completes, retained-job reset/drop guards, failed
+admission cleanup and repeated global reset/unload with pending and completed
+jobs. PTY wait-any interruption spans two pools. The same cases run in the
+normal, UBSan, ASan and Valgrind suites (PTYs are excluded from Valgrind).
 
 ## HTTP compression coverage
 
@@ -140,7 +148,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 133 resulting command buffers, including:
+completion widget. The test checks 138 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -343,7 +351,7 @@ third-party libraries themselves are not instrumented by this target.
 ## Memory checks and dependency findings
 
 `make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
-instrumentation. The full suite passes, including all 133 completion cases,
+instrumentation. The full suite passes, including all 138 completion cases,
 loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
 preloaded into test children; leak detection is disabled for this target.
 A deliberately overflowing child whose failure was ignored by its parent still
@@ -387,6 +395,6 @@ reported separately. Run benchmarks without concurrent memory checks or other
 heavy work. This is a loopback overhead experiment, not a WAN throughput test.
 
 Pipe/socket streaming, autonomous background transfers, arbitrary fork inheritance,
-automatic redirects, cookies, named concurrent pools, HTTP/2/3-specific behavior,
+automatic redirects, cookies, per-session defaults, HTTP/2/3-specific behavior,
 broader proxy integration and cross-platform ABI compatibility still need their own
 implementation and/or test coverage before being relied on.

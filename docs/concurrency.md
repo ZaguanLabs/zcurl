@@ -1,4 +1,4 @@
-# Concurrent HTTP (0.12.0-dev)
+# Concurrent HTTP (0.18.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
@@ -55,7 +55,7 @@ are not supported. Only submission headers can repeat.
 
 | Operation | Behavior |
 | --- | --- |
-| `submit` | Accepts the HTTP request options, including methods, literal binary data, file input/output, headers, CA file, `--fail`, timeouts, and `--max-body`. Copies literal data and configuration, retains any file descriptors, then attaches the request to the pool without network I/O. Returns `event=submitted`, `state=pending`. Its result array receives only this acknowledgment and is not remembered. |
+| `submit` | Accepts the HTTP request options, including methods, literal binary data, file input/output, headers, CA file, `--session`, `--fail`, timeouts, and `--max-body`. Copies literal data and configuration, retains any file descriptors, then attaches the request to the pool without network I/O. Returns `event=submitted`, `state=pending`. Its result array receives only this acknowledgment and is not remembered. |
 | `poll` | Advances all pending HTTP jobs. `-t`/`--timeout` is 0..1000 ms, default 0. Returns one retained terminal handle as `event=ready`, or `event=idle` with an empty handle. It does not copy response payloads or consume a result. |
 | `wait` | Advances all pending jobs until the named request is terminal or the wait expires. `-t`/`--timeout` is 0..600000 ms, default 10000. Returns 0 with `event=ready` for the target, even if its transfer failed. A wait timeout returns 28 with `event=timeout`, `error_kind=wait-timeout`, and `code=0`, preserving the request. No response is consumed. |
 | `wait-any` | Advances all pending jobs until any selected handle is terminal. Accepts 1..32 distinct existing HTTP names and the same timeout/result options as `wait`. Returns the first selected completion in submission order without consuming it. A wait timeout returns 28 and preserves every request. |
@@ -87,7 +87,7 @@ fi
 
 ## Waiting for a selected set
 
-Use `wait-any` when a batch shares the HTTP pool with other callers. Unlike
+Use `wait-any` when a batch shares the HTTP job registry with other callers. Unlike
 unfiltered `poll`, it only reports a handle from the supplied selection. Every
 pending job still gets network progress, including unselected dependencies.
 
@@ -212,7 +212,8 @@ does not cancel or extend the request. If the request deadline expires first,
 finish or cancel that request. A cancelled or failed target is also ready for
 collection, so waiting for it succeeds without erasing its original outcome.
 
-At most 32 handles, including completed and cancelled records, can coexist.
+At most 32 handles across all sessions, including completed and cancelled
+records, can coexist.
 Admission also reserves at most 128 MiB across jobs, counting each configured
 response-body limit (except for file output), 256 KiB for response headers,
 literal upload bytes, request header bytes, and copied URL/CA/method strings.
@@ -227,12 +228,29 @@ Allocator overhead, libcurl/TLS caches, Zsh's encoded strings, transient
 publication copies and caller-owned snapshots use additional memory. Request
 configuration and upload copies remain owned until collection/drop/reset/unload.
 
-The concurrent pool retains connections between requests. It is separate from
-the default and named synchronous HTTP pools and WebSocket connections. Synchronous requests and
+Every session has its own concurrent pool, retaining connections between
+requests. Use `http submit HANDLE --session NAME` to select an existing
+[named session](sessions.md); omitting the option uses the default concurrent
+pool. Unknown sessions fail before descriptor preparation. Handles remain in
+one global namespace, and all pools share the 32-job/128-MiB admission limits.
+Session reset/drop rejects retained jobs, including completed or cancelled jobs;
+collect or drop them first. Global reset and unload release jobs before pools.
+
+Each driver iteration advances every pool with pending jobs. One socket wait
+covers descriptors from all those pools and honors their earliest libcurl timer,
+in addition to submission/wait deadlines and the 100-ms cap. A libcurl multi
+failure invalidates attached jobs in the affected pool; other pools and completed
+records remain available. Temporary polling-allocation failures preserve jobs.
+The descriptor aggregation uses libcurl's
+[`curl_multi_waitfds`](https://curl.se/libcurl/c/curl_multi_waitfds.html) and
+[`curl_multi_poll`](https://curl.se/libcurl/c/curl_multi_poll.html).
+
+Concurrent pools are separate from synchronous pools and WebSocket connections,
+including the synchronous pool with the same session name. Synchronous requests and
 WS polling do not advance concurrent HTTP jobs. Concurrent HTTP polling/waiting
 does not advance WebSockets. TLS verification, protocol restrictions, redirect
 behavior, proxy environment handling and absence of a cookie engine match the
-existing HTTP API; named jobs are not isolated credential sessions.
+existing HTTP API. A job name alone does not create a session or isolate caches.
 
 Signals are queued around libcurl and publication, then delivered between
 driver steps. Ctrl-C stops polling/waiting and preserves outstanding jobs when

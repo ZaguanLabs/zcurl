@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.17.0-dev"
+#define ZCURL_VERSION "0.18.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -23,6 +23,8 @@ struct http_session {
     char *name;
     CURL *easy;
     CURLM *multi;
+    CURLM *http_multi;
+    size_t http_jobs;
 };
 static struct http_session default_session, *named_sessions;
 static pid_t owner;
@@ -443,7 +445,7 @@ static const struct option_spec option_specs[] = {
 };
 
 static int
-parse_request(char **args, struct request *r, int allow_session)
+parse_request(char **args, struct request *r)
 {
     int options = 1;
     unsigned seen = 0;
@@ -500,7 +502,7 @@ parse_request(char **args, struct request *r, int allow_session)
         case NOPROXY: r->noproxy = value; break;
         case PROXY_CA: r->proxy_ca = value; if (!*value) goto invalid; break;
         case SESSION:
-            if (!allow_session || !identifier(value) || strlen(value) > 64) goto invalid;
+            if (!identifier(value) || strlen(value) > 64) goto invalid;
             r->session_name = value; break;
         case METHOD:
             if (!token(value, strlen(value))) goto invalid;
@@ -578,6 +580,9 @@ close_session(struct http_session *s)
     if (s->multi)
         curl_multi_cleanup(s->multi);
     s->multi = NULL;
+    if (s->http_multi)
+        curl_multi_cleanup(s->http_multi);
+    s->http_multi = NULL;
 }
 
 #include "http_sessions.c"
@@ -850,13 +855,13 @@ help(void)
          "  -x, --proxy URL          Override HTTP proxy; empty disables proxies\n"
          "      --noproxy HOSTS      Override proxy bypass list; empty bypasses none\n"
          "      --proxy-cacert FILE   PEM trust file for an HTTPS proxy\n"
-         "      --session NAME       Use a named synchronous HTTP session\n"
+         "      --session NAME       Use a named HTTP session\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl session create|reset|drop NAME\n"
-         "  Manage named synchronous HTTP pools; preserves transfer results.\n"
+         "  Manage named HTTP pools; preserves transfer results.\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
          "zcurl headers FIELD --from RAW --result ARRAY [--trailers]\n"
@@ -920,13 +925,13 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
             goto done;
         }
         if (!strcmp(control, "--reset")) {
-            sessions_cleanup();
             websocket_cleanup();
             http_cleanup();
+            sessions_cleanup();
             goto done;
         }
     }
-    if (parse_request(args, &r, 1))
+    if (parse_request(args, &r))
         perform_request(&r);
     if (r.result)
         publish_result(r.result, RESULT_HTTP);
@@ -1096,7 +1101,6 @@ int finish_(UNUSED(Module m))
     named_sessions = NULL;
     websockets = NULL;
     http_jobs = NULL;
-    http_pool = NULL;
     http_reserved = 0;
     initialized = busy = 0;
     for (i = 0; i < ARRAY_SIZE(result_fields); ++i) {

@@ -1,5 +1,5 @@
-/* Included by zcurl.c. Each synchronous session owns an easy/multi pair;
- * no connection pool or libcurl share handle crosses session boundaries. */
+/* Included by zcurl.c. Each session owns separate synchronous and concurrent
+ * pools. Retained jobs pin the session until collection or drop. */
 #define HTTP_SESSIONS 16
 
 static struct http_session *
@@ -56,6 +56,10 @@ sessions_command(char **args)
         return 0;
     }
     if (!s) { message = "unknown HTTP session"; goto error; }
+    if (s->http_jobs) {
+        message = "HTTP session has retained requests; collect or drop them first";
+        goto error;
+    }
     close_session(s);
     if (!strcmp(operation, "drop")) {
         *link = s->next;
