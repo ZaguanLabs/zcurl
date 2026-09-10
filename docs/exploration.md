@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.7.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.8.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -72,8 +72,10 @@ requests turn out to be the main need.
    storage are implemented. Next, measure real consuming workloads and determine
    whether they need scheduling independent of shell calls. Responsive typing
    and correct timers while ZLE is active and inactive still need separate work.
-6. **Packaging.** Test multiple Zsh builds and distributions, sanitizers and
-   dependency combinations before promising a portable native module.
+6. **Packaging.** Optional [native completion](completion.md) is implemented
+   and exercised in a real ZLE session. Test multiple Zsh builds and
+   distributions, sanitizers and dependency combinations before promising
+   a portable native module.
 
 The next concurrency milestone is integration feedback on deadlines, collection
 and admission limits. Whether to follow that with ZLE integration or a persistent

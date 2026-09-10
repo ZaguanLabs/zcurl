@@ -1,0 +1,152 @@
+"""Exercise the installed completion through ZLE in an isolated real PTY."""
+import os
+from pathlib import Path
+import pty
+import select
+import signal
+import time
+
+
+def test(env, plain, temp):
+    root = Path(__file__).resolve().parents[1]
+    work = temp / "completion"
+    work.mkdir()
+    (work / "trust bundle[1].pem").write_text("fixture")
+    setup = work / "setup.zsh"
+    setup.write_text(r'''
+        fpath=( "$ZCURL_COMPLETION_ROOT/completions" $fpath )
+        autoload -Uz compinit
+        compinit -D
+        zstyle ':completion:*' completer _complete
+        zstyle ':completion:*' menu no
+        unsetopt listbeep
+        setopt completeinword
+        module_path=( "$ZCURL_MODULE_PATH" $module_path )
+        zmodload zcurl
+        typeset -A zc_hash_valid
+        zcurl -r zc_hash_valid -- "$ZCURL_TEST_HTTP/tiny" || return
+        typeset -Ar zc_hash_locked=(keep value)
+        typeset -a zc_array_valid
+        typeset -ar zc_array_locked=(keep)
+        typeset -aU zc_array_unique=(keep)
+        typeset -au zc_array_upper=(keep)
+        typeset -a zc_array_ø
+        alias zc='noglob zcurl'
+        zcurl() { print -r -- invoked >> "$ZCURL_COMPLETION_WORK/calls"; return 99 }
+        integer zc_test_round=0 zc_test_check_results=1
+        zc_test_complete() {
+            zle complete-word
+            print -rn -- "$BUFFER" > "$ZCURL_COMPLETION_WORK/buffer"
+            if (( zc_test_check_results )); then
+                [[ $zcurl_body == $'ok\n' && $zcurl_code == 0 && $zcurl_http_status == 200 ]] ||
+                    print -r -- changed >> "$ZCURL_COMPLETION_WORK/calls"
+            fi
+            BUFFER=''
+            CURSOR=0
+            zle -I
+            print -r -- "COMPLETED:$(( ++zc_test_round ))"
+        }
+        zle -N zc_test_complete
+        bindkey -e
+        bindkey '^X^T' zc_test_complete
+        print -r -- COMPLETION_READY
+    ''')
+    before = plain.request_count
+    child_env = dict(env, TERM="xterm", PS1="completion> ", ZDOTDIR=str(work),
+                     ZCURL_COMPLETION_ROOT=str(root), ZCURL_COMPLETION_WORK=str(work))
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(work)
+        os.execvpe("zsh", ["zsh", "-dfi"], child_env)
+    output = bytearray()
+
+    def wait_for(marker, timeout=10):
+        deadline = time.monotonic() + timeout
+        while marker not in output:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, f"completion PTY timed out: {bytes(output)!r}"
+            if select.select([fd], [], [], remaining)[0]:
+                output.extend(os.read(fd, 65536))
+
+    count = 0
+
+    def complete(text, expected, cursor_back=0):
+        nonlocal count
+        output.clear()
+        # Ctrl-B moves the cursor without changing the suffix under completion.
+        os.write(fd, text.encode() + b'\x02' * cursor_back + b'\x18\x14')
+        count += 1
+        wait_for(f"COMPLETED:{count}\r\n".encode())
+        actual = (work / "buffer").read_text()
+        assert actual == expected, f"completion {text!r}: {actual!r} != {expected!r}\n{bytes(output)!r}"
+        assert not (work / "calls").exists(), 'completion invoked zcurl or changed its results'
+
+    try:
+        os.write(fd, b'source "$ZCURL_COMPLETION_WORK/setup.zsh"\n')
+        wait_for(b'COMPLETION_READY\r\n')
+        complete('zcurl he', 'zcurl headers ')
+        complete('zcurl http su', 'zcurl http submit ')
+        complete('zcurl ws re', 'zcurl ws recv ')
+        complete('zcurl --data-f', 'zcurl --data-fd ')
+        complete('zcurl --ver', 'zcurl --version ')
+        complete('zcurl --version --out', 'zcurl --version --out')
+        complete('zcurl https://example.invalid --rese', 'zcurl https://example.invalid --rese')
+        complete('zcurl -X PA', 'zcurl -X PATCH ')
+        complete('zcurl --head -X H', 'zcurl --head -X HEAD ')
+        complete('zcurl --head -X P', 'zcurl --head -X P')
+        complete('zcurl --data value -X H', 'zcurl --data value -X H')
+        complete('zcurl --data value --data-f', 'zcurl --data value --data-f')
+        complete('zcurl --head --data-f', 'zcurl --head --data-f')
+        complete('zcurl --data-fd 10 --he', 'zcurl --data-fd 10 --header ')
+        complete('zcurl https://example.invalid --output-f', 'zcurl https://example.invalid --output-fd ')
+        complete('zcurl -- --out', 'zcurl -- --out')
+        complete('zcurl http submit job --data-f', 'zcurl http submit job --data-fd ')
+        complete('zcurl http submit --ti', 'zcurl http submit --ti')
+        complete('zcurl http wait job --ti', 'zcurl http wait job --timeout ')
+        complete('zcurl http collect job --ti', 'zcurl http collect job --ti')
+        complete('zcurl http poll --ti', 'zcurl http poll --timeout ')
+        complete('zcurl http nonsense --ti', 'zcurl http nonsense --ti')
+        complete('zcurl ws open channel --max-q', 'zcurl ws open channel --max-queue ')
+        complete('zcurl ws send channel --type b', 'zcurl ws send channel --type binary ')
+        complete('zcurl ws recv channel --max-c', 'zcurl ws recv channel --max-chunk ')
+        complete('zcurl ws recv channel --ti', 'zcurl ws recv channel --ti')
+        complete('zcurl ws close channel --rea', 'zcurl ws close channel --reason ')
+        complete('zcurl headers Set-C', 'zcurl headers Set-Cookie ')
+        complete('zcurl headers ETag --tra', 'zcurl headers ETag --trailers ')
+        complete('zcurl -r zc_hash_v', 'zcurl -r zc_hash_valid ')
+        complete('zcurl -r zc_hash_l', 'zcurl -r zc_hash_l')
+        complete('zcurl -r zc_array_v', 'zcurl -r zc_array_v')
+        complete('zcurl headers ETag -r zc_array_v', 'zcurl headers ETag -r zc_array_valid ')
+        complete('zcurl headers ETag -r zc_array_un', 'zcurl headers ETag -r zc_array_un')
+        complete('zcurl headers ETag -r zc_array_up', 'zcurl headers ETag -r zc_array_up')
+        complete('zcurl headers ETag -r zc_array_l', 'zcurl headers ETag -r zc_array_l')
+        complete('zcurl headers ETag -r path', 'zcurl headers ETag -r path')
+        complete('zcurl headers ETag -r zc_array_ø', 'zcurl headers ETag -r zc_array_ø')
+        complete('zcurl -c tru', r'zcurl -c trust\ bundle\[1\].pem ')
+        complete('zcurl http submit job -c tru', r'zcurl http submit job -c trust\ bundle\[1\].pem ')
+        complete('zcurl ws open channel -c tru', r'zcurl ws open channel -c trust\ bundle\[1\].pem ')
+        complete('zcurl -X PTCH', 'zcurl -X PATCH ', cursor_back=3)
+        complete('zcurl http submit job https:', 'zcurl http submit job https://')
+        complete('zcurl ws open channel wss:', 'zcurl ws open channel wss://')
+        complete('zcurl http submit job ftp:', 'zcurl http submit job ftp:')
+        complete('zc --max-b', 'zc --max-body ')
+        complete('zcurl --header X:one --heade', 'zcurl --header X:one --header ')
+        complete('zcurl --request=PA', 'zcurl --request=PA')
+        complete('zcurl -XPA', 'zcurl -XPA')
+        output.clear()
+        os.write(fd, b"zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'; print -r -- MATCHER_READY\n")
+        wait_for(b'MATCHER_READY\r\n')
+        complete('zcurl -X pat', 'zcurl -X PATCH ')
+        output.clear()
+        os.write(fd, b'zc_test_check_results=0; zmodload -u zcurl; unfunction zcurl; print -r -- UNLOADED_READY\n')
+        wait_for(b'UNLOADED_READY\r\n')
+        complete('zcurl ws send channel --type b', 'zcurl ws send channel --type binary ')
+        assert plain.request_count == before + 1, 'completion caused HTTP I/O'
+        print(f'PASS: {count} real ZLE completions, operation grammar, quoting, array types and unchanged HTTP state')
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.waitpid(pid, 0)
+        os.close(fd)

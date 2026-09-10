@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import websocket_fixture
+import completion
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -526,6 +527,7 @@ if __name__ == "__main__":
         integration(env, plain, tls, temp)
         api_test(env, plain, temp)
         loader_test(env)
+        completion.test(env, plain, temp)
         streaming_test(env, plain, temp)
         upload_test(env, plain, temp)
         before = plain.request_count

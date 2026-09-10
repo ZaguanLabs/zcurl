@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.7.0-dev** is intended for trying in a project: methods, request
+Version **0.8.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -138,6 +138,21 @@ exec {output_fd}>response.bin || return
 concurrent HTTP. Response bytes go directly to the file; `body` is empty and
 `bytes` reports bytes written. The module owns a duplicate during the transfer.
 See [file output](docs/file-output.md) for offsets, limits and partial failures.
+
+## Interactive completion
+
+Add the completion directory to `fpath` before your existing completion setup:
+
+```zsh
+fpath=( /absolute/path/to/zcurl/completions $fpath )
+autoload -Uz compinit
+compinit
+```
+
+Tab completion covers synchronous HTTP, concurrent operations, WebSockets and
+header lookup, including method/frame types, CA-file paths and result arrays.
+It works without loading the module and never invokes `zcurl`. The project
+loader does not change completion settings. See [completion setup and behavior](docs/completion.md).
 
 ## Read response headers
 

@@ -1,4 +1,4 @@
-# Validation of 0.7.0-dev
+# Validation of 0.8.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -45,6 +45,25 @@ No public endpoints, account credentials or system certificate changes are used.
 The synchronous multi driver queues Zsh signals around libcurl calls and
 delivers them between calls. Tests establish these specific behaviors, not
 every resolver, signal trap, job-control combination, or backend behavior.
+
+## Completion coverage
+
+An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
+completion widget. The test checks 51 resulting command buffers, including:
+
+- HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
+  handle positions and the handle-free `http poll` grammar.
+- Methods, frame types, body/HEAD exclusions, repeated headers, options after
+  a URL, end-of-options handling, and unsupported attached argument forms.
+- Associative versus indexed result arrays; filtering readonly, converting,
+  unique and non-ASCII names.
+- CA filenames containing spaces and brackets, URL scheme prefixes, mid-word
+  insertion with `COMPLETE_IN_WORD`, aliases and a custom matcher style.
+- Completion after module unload, unchanged HTTP result parameters, and no
+  invocation of `zcurl` or server-observed network requests during completion.
+
+These are interactive completion checks on installed Zsh 5.9.2. They do not
+validate every framework or third-party completer. See [setup and behavior](completion.md).
 
 ## Header-lookup coverage
 

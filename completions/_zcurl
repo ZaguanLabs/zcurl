@@ -1,0 +1,158 @@
+#compdef zcurl
+
+# Completion only describes arguments. Never invoke the builtin: even an info
+# call would replace the caller's last transfer result.
+local curcontext="$curcontext" context state state_descr line
+local -A opt_args
+local -a specs operations allowed expl
+local -a invalid_names=( '[^A-Za-z_]*' '*[^A-Za-z_0-9]*' )
+local mode=http operation=request
+
+if (( CURRENT > 2 )); then
+  case $words[2] in
+    --help|--version|--reset) return 1 ;;
+    http|ws|headers)
+      mode=$words[2]
+      compset -n 2
+      if [[ $mode == headers ]]; then
+        if (( CURRENT == 2 )); then
+          _values 'response field name' Content-Type Content-Length Set-Cookie \
+            ETag Last-Modified Location Retry-After Link WWW-Authenticate Digest
+          return
+        fi
+        compset -n 2
+        operation=lookup
+      else
+        if [[ $mode == http ]]; then
+          operations=(
+            'submit:submit a named request' 'poll:advance pending requests'
+            'wait:wait for one request' 'collect:consume a completed response'
+            'cancel:cancel a pending request' 'drop:release a request'
+            'info:inspect a request without network I/O'
+          )
+        else
+          operations=(
+            'open:open a WebSocket connection' 'send:queue a frame'
+            'recv:receive without waiting' 'poll:drive sends and receive an event'
+            'close:queue a close frame' 'drop:release a connection'
+            'info:inspect connection state'
+          )
+        fi
+        if (( CURRENT == 2 )); then
+          _describe -t commands "$mode operation" operations
+          return
+        fi
+        operation=$words[2]
+        allowed=( "${(@)operations%%:*}" )
+        (( ${allowed[(Ie)$operation]} )) || return 1
+        compset -n 2
+        if [[ $mode != http || $operation != poll ]]; then
+          if (( CURRENT == 2 )); then
+            _message 'handle (ASCII identifier, at most 64 characters)'
+            return 1
+          fi
+          compset -n 2
+        fi
+      fi
+      curcontext="${curcontext%:*}:$mode-$operation"
+      ;;
+  esac
+fi
+
+if [[ $mode == headers ]]; then
+  specs=(
+    '--from[raw HTTP response headers]:raw header transcript:'
+    '(-r --result)'{-r,--result}'[store values in an indexed array]:indexed array:->arrays'
+    '--trailers[select response trailers instead of headers]'
+  )
+else
+  specs=( '(-r --result)'{-r,--result}'[store a response snapshot]:associative array:->associations' )
+fi
+
+case $mode:$operation in
+  http:request|http:submit)
+    specs+=(
+      '(-c --cacert)'{-c,--cacert}'[PEM trust file]:CA file:_files'
+      '(-t --timeout)'{-t,--timeout}'[total timeout, default 10000 ms]:milliseconds (1..600000):'
+      '--connect-timeout[connection timeout, default 3000 ms]:milliseconds (1..600000):'
+      '(-X --request)'{-X,--request}'[HTTP method]:method:->methods'
+      '*'{-H,--header}'[add a request header]:header field:'
+      '(-d --data --data-fd -I --head)'{-d,--data}'[literal request body, implies POST]:body:'
+      '(-d --data --data-fd -I --head)--data-fd[upload a captured regular-file range]:readable regular-file descriptor:'
+      '(-I --head -d --data --data-fd)'{-I,--head}'[request headers only]'
+      '(-f --fail)'{-f,--fail}'[return 22 for HTTP errors, retaining the response]'
+      '--max-body[response limit, default 8388608 bytes]:bytes (1..67108864):'
+      '--output-fd[write the response directly to a regular file]:writable regular-file descriptor:'
+    )
+    if [[ $operation == request ]]; then
+      specs+=( '1:URL or command:->top' )
+      if (( $#words == 2 )); then
+        specs+=( '(- : *)--help[show usage]' '(- : *)--version[show versions]'
+          '(- : *)--reset[close all sessions and clear results]' )
+      fi
+    else
+      specs+=( '1:HTTP or HTTPS URL:->http-url' )
+    fi
+    ;;
+  http:poll)
+    specs+=( '(-t --timeout)'{-t,--timeout}'[poll timeout, default 0 ms]:milliseconds (0..1000):' )
+    ;;
+  http:wait)
+    specs+=( '(-t --timeout)'{-t,--timeout}'[independent wait timeout, default 10000 ms]:milliseconds (0..600000):' )
+    ;;
+  ws:open)
+    specs+=(
+      '(-c --cacert)'{-c,--cacert}'[PEM trust file]:CA file:_files'
+      '*'{-H,--header}'[add a handshake header]:header field:'
+      '(-t --timeout)'{-t,--timeout}'[handshake timeout, default 10000 ms]:milliseconds (1..600000):'
+      '--connect-timeout[connection timeout, default 3000 ms]:milliseconds (1..600000):'
+      '--max-queue[send queue limit, default 8388608 bytes]:bytes (1..67108864):'
+      '--max-message[message limit, default 8388608 bytes]:bytes (1..67108864):'
+      '1:WS or WSS URL:->ws-url'
+    )
+    ;;
+  ws:send)
+    specs+=(
+      '(-d --data)'{-d,--data}'[literal frame payload]:payload:'
+      '--type[frame type, default text]:frame type:(text binary ping pong)'
+      '--more[send a nonfinal data fragment]'
+    )
+    ;;
+  ws:poll|ws:recv)
+    specs+=( '--max-chunk[receive chunk limit, default 65536 bytes]:bytes (1..65536):' )
+    if [[ $operation == poll ]]; then
+      specs+=( '(-t --timeout)'{-t,--timeout}'[poll timeout, default 0 ms]:milliseconds (0..1000):' )
+    fi
+    ;;
+  ws:close)
+    specs+=( '--code[close code, default 1000]:close code:' '--reason[UTF-8 close reason, at most 123 bytes]:reason:' )
+    ;;
+esac
+
+_arguments -C -0 -S "$specs[@]" && return 0
+case $state in
+  top)
+    if (( CURRENT == 2 )); then
+      operations=( 'http:concurrent HTTP requests' 'ws:persistent WebSockets' 'headers:look up response header values' )
+      _describe -t commands 'command' operations
+    fi
+    _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https://
+    ;;
+  http-url) _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https:// ;;
+  ws-url) _wanted urls expl 'WS or WSS URL' compadd -S '' -- ws:// wss:// ;;
+  methods)
+    if (( ${+opt_args[-I]} || ${+opt_args[--head]} )); then
+      _values 'HTTP method' HEAD
+    elif (( ${+opt_args[-d]} || ${+opt_args[--data]} || ${+opt_args[--data-fd]} )); then
+      _values 'HTTP method' GET POST PUT PATCH DELETE OPTIONS
+    else
+      _values 'HTTP method' GET HEAD POST PUT PATCH DELETE OPTIONS
+    fi
+    ;;
+  associations)
+    _parameters -F invalid_names -g 'association*~*-(readonly|special|tied|autoload|lower|upper|left|right|restricted)*'
+    ;;
+  arrays)
+    _parameters -F invalid_names -g 'array*~*-(readonly|special|tied|autoload|unique|lower|upper|left|right|restricted)*'
+    ;;
+esac

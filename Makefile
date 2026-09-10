@@ -19,7 +19,7 @@ build/zcurl.so: src/zcurl.c src/websocket.c src/http_async.c src/http_headers.c 
 	mv -f $@.tmp $@
 
 check:
-	@for file in zcurl.zsh scripts/*.zsh tests/*.zsh examples/*.zsh; do zsh -dfn "$$file" || exit; done
+	@for file in zcurl.zsh completions/_zcurl scripts/*.zsh tests/*.zsh examples/*.zsh; do zsh -dfn "$$file" || exit; done
 
 test: all check
 	python3 tests/integration.py
