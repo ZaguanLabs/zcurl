@@ -5,7 +5,7 @@ CURL_CFLAGS := $(shell pkg-config --cflags libcurl)
 CURL_LIBS := $(shell pkg-config --libs libcurl)
 ASAN_RUNTIME ?= $(shell $(CC) -print-file-name=libasan.so)
 
-.PHONY: all test check benchmark memcheck ubsan asan clean
+.PHONY: all test check benchmark benchmark-headers memcheck ubsan asan clean
 all: build/zcurl.so
 
 ZSH_HEADERS := $(wildcard $(ZSH_SRC)/config.h $(ZSH_SRC)/Src/*.h $(ZSH_SRC)/Src/*.mdh $(ZSH_SRC)/Src/*.epro)
@@ -32,6 +32,9 @@ test: all check
 
 benchmark: all check
 	python3 tests/integration.py --benchmark
+
+benchmark-headers: all check
+	zsh -df scripts/benchmark-headers.zsh
 
 memcheck: all check
 	python3 tests/integration.py --valgrind

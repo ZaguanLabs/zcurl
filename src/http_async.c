@@ -220,7 +220,7 @@ http_submit(const char *name, struct request *r)
     }
     j->attached = 1;
     j->request_headers = r->headers;
-    r->headers = NULL;
+    r->headers = r->header_tail = NULL;
     j->deadline = monotonic_ms() + r->timeout;
     *tail = j;
     http_reserved += reserve;

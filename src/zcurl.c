@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.25.0-dev"
+#define ZCURL_VERSION "0.26.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -60,7 +60,7 @@ struct request {
     long timeout, connect_timeout, max_body;
     int fail_http, head, has_data, has_input, input_fd, has_output, output_fd;
     int compressed;
-    struct curl_slist *headers;
+    struct curl_slist *headers, *header_tail;
     size_t header_bytes;
 };
 
@@ -426,12 +426,15 @@ add_header(struct request *r, const char *value)
             return 0;
     if (n + 2 > HEADER_LIMIT - r->header_bytes)
         return 0;
-    next = curl_slist_append(r->headers, value);
+    /* Append through the last node to avoid walking the entire list. Let
+     * libcurl allocate/link nodes; its returned pointer is this sublist's head. */
+    next = curl_slist_append(r->header_tail, value);
     if (!next) {
         set_error("memory", "could not allocate request headers", 27);
         return 0;
     }
-    r->headers = next;
+    if (r->header_tail) r->header_tail = r->header_tail->next;
+    else r->headers = r->header_tail = next;
     r->header_bytes += n + 2;
     return 1;
 }

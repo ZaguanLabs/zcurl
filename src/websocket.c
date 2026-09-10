@@ -294,7 +294,7 @@ ws_open(const char *name, struct request *r, long max_queue, long max_message, c
     w->max_message = (size_t)max_message;
     w->handshake.limit = HEADER_LIMIT;
     w->request_headers = r->headers;
-    r->headers = NULL;
+    r->headers = r->header_tail = NULL;
     if (!w->name || !w->easy || !w->multi) goto done;
 #define WSET(option, value) do { rc = curl_easy_setopt(w->easy, option, value); if (rc) goto done; } while (0)
     WSET(CURLOPT_URL, r->url);

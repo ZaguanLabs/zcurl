@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.25.0-dev** is intended for trying in a project: methods, request
+Version **0.26.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -418,6 +418,7 @@ make memcheck    # Valgrind on scripted tests; requires Valgrind
 make ubsan       # separate instrumented module; includes examples and PTY checks
 make asan        # address + undefined behavior checks; matching ASan runtime needed
 make benchmark   # local HTTPS comparison with external curl
+make benchmark-headers  # parser-only scaling for repeated request headers
 ```
 
 Tests use temporary local certificates and loopback servers, with proxies
@@ -443,6 +444,10 @@ curl process given all URLs (medians of three rounds). Persistent cases used
 one connection; separate processes used 100. Those are historical measurements
 of tiny loopback requests, not predictions for real API latency. Use
 `make benchmark` to measure this revision on your machine.
+
+Request-header list construction now scales linearly. A local parser-only
+benchmark reduced the median for 65,536 headers from 3.60 seconds to 12.6 ms.
+See [header construction and reproducible measurements](docs/header-performance.md).
 
 [Exploration notes](docs/exploration.md) cover the architectural options.
 Next: integration feedback on the concurrent HTTP and WebSocket APIs,

@@ -32,6 +32,9 @@ def serve(h):
         assert 'Proxy-Authorization' not in h.headers, 'proxy credentials reached origin'
     accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
     offered = h.headers.get_all('Sec-WebSocket-Protocol', [])
+    if h.path == '/ws-header-batch':
+        assert h.headers.get_all('X-Batch') == [f'value_{i}' for i in range(1, 41)]
+        assert offered == ['fixture.v1'], offered
     if h.path.startswith('/ws-protocol/'):
         assert offered == ['fixture.v1'], offered
     if h.path in ('/ws-protocol/early', '/ws-protocol/early-only'):
@@ -40,7 +43,7 @@ def serve(h):
     h.send_header("Upgrade", "websocket")
     h.send_header("Connection", "Upgrade")
     h.send_header("Sec-WebSocket-Accept", accept)
-    if h.path in ('/ws-protocol/match', '/ws-protocol/early', '/ws-protocol/duplicate'):
+    if h.path in ('/ws-protocol/match', '/ws-protocol/early', '/ws-protocol/duplicate', '/ws-header-batch'):
         h.send_header('Sec-WebSocket-Protocol', 'fixture.v1')
     if h.path == '/ws-protocol/duplicate':
         h.send_header('Sec-WebSocket-Protocol', 'fixture.v1')

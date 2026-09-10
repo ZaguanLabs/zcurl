@@ -294,6 +294,16 @@ def api_test(env, plain, temp):
     print(run(env, (ROOT / "tests" / "invalid.zsh").read_text()))
     assert plain.request_count == before, "invalid arguments caused a network request"
     print("PASS: invalid result targets, headers, methods and options cause no HTTP requests")
+    before = plain.request_count
+    header_lists = run(env, (ROOT / 'tests' / 'request-headers.zsh').read_text())
+    assert header_lists.startswith('PASS: request header boundaries'), header_lists
+    assert plain.request_count == before + 4, 'header parsing/cleanup caused unexpected I/O'
+    expected = [f'value_{i}' for i in range(1, 41)]
+    for suffix in ('sync', 'async', 'fresh'):
+        result = json.loads((temp / f'header-batch-{suffix}.json').read_text())
+        actual = [value for name, value in result['headers'] if name.lower() == 'x-batch']
+        assert actual == (['fresh'] if suffix == 'fresh' else expected), (suffix, actual)
+    print(header_lists)
 
 
 def loader_test(env):
@@ -427,7 +437,13 @@ def interrupt_test(env, plain):
         deadline = time.monotonic() + timeout
         while marker not in collected and time.monotonic() < deadline:
             if select.select([fd], [], [], 0.1)[0]:
-                collected.extend(os.read(fd, 65536))
+                try:
+                    data = os.read(fd, 65536)
+                except OSError as exc:
+                    raise AssertionError(f"PTY read failed waiting for {marker!r}: {bytes(collected)!r}") from exc
+                if not data:
+                    raise AssertionError(f"PTY closed waiting for {marker!r}: {bytes(collected)!r}")
+                collected.extend(data)
         if marker not in collected:
             raise AssertionError(f"PTY missing {marker!r}: {bytes(collected)!r}")
 

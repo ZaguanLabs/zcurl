@@ -1,4 +1,4 @@
-# Validation of 0.25.0-dev
+# Validation of 0.26.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -11,6 +11,7 @@ make test
 make memcheck
 make ubsan
 make benchmark
+make benchmark-headers
 ```
 
 The Python fixture creates HTTP/1.1 loopback servers and a one-day localhost
@@ -166,6 +167,27 @@ requests: warm reuse, a retained job with its original CA path, and a rejected
 future TLS connection after trust removal. Proxy tests restore environment
 selection and bypass independently while retaining trust/limits and accepted jobs.
 Completion filters already updated/unset fields without reading session state.
+
+## Request-header construction
+
+The shared HTTP/WebSocket builder preserves header order while appending through
+a cached last node. Tests parse 65,536 shortest field specifications at the exact
+256 KiB boundary and reject an extra field. Concurrent and WebSocket parsers
+also reject oversized lists before I/O. The HTTP fixture verifies 40 ordered
+duplicates, owned copies after submission and an independent later request;
+the WebSocket fixture checks the same list plus its generated subprotocol field.
+Invalid partial lists and pending drop/reset/unload paths exercise cleanup.
+The added test permits exactly four origin requests, detecting accidental I/O
+from validation or cleanup. Existing proxy tests also retain header separation.
+
+`make benchmark-headers` measures parser scaling without network access and
+reports three-sample median/minimum/maximum timings; it has no pass/fail timing
+threshold. See [method and local results](header-performance.md).
+
+An initial ASan run lost its PTY shell during the WebSocket signal test without
+a sanitizer report. The full retry and two isolated ASan signal runs passed.
+The PTY reader now includes captured terminal output when reads fail or the
+shell closes, so a recurrence retains useful diagnostics.
 
 ## HTTP compression coverage
 
