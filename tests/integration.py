@@ -642,6 +642,9 @@ if __name__ == "__main__":
             assert reply['method'] == 'GET' and reply['body'] == ''
             assert 'authorization' not in {k.lower() for k, _ in reply['headers']}
         assert (temp / 'session-output.bin').read_bytes() == b'file\0session\n\n'
+        trust_defaults = run(env, (ROOT / 'tests' / 'session-trust.zsh').read_text())
+        assert trust_defaults.startswith('PASS: session CA defaults'), trust_defaults
+        print(trust_defaults)
         jobs_before = plain.request_count
         session_jobs = run(env, (ROOT / 'tests' / 'session-jobs.zsh').read_text())
         assert session_jobs.startswith('PASS: session job discovery'), session_jobs

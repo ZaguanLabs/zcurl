@@ -140,3 +140,8 @@ The HTTPS proxy has its own generated certificate. Tests reject untrusted proxy
 certificates and incorrect proxy hostnames, reject origin certificates trusted
 only by the proxy bundle, verify settings reset and concurrent path ownership,
 and exchange binary HTTP bodies and WS/WSS frames through nested TLS connections.
+
+Named sessions can configure `--proxy-cacert FILE` independently of the origin
+`--cacert FILE` default. Explicit request values override either default.
+Clearing a session's path changes future requests; already submitted jobs keep
+their captured paths. See [session CA defaults](sessions.md#ca-file-defaults).

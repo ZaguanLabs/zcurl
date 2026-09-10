@@ -1,4 +1,4 @@
-# Named HTTP sessions (0.21.0-dev)
+# Named HTTP sessions (0.22.0-dev)
 
 Named sessions give HTTP callers independent libcurl connection pools.
 Create a session explicitly, then select it on each request:
@@ -29,7 +29,7 @@ WebSocket names occupy independent namespaces.
 | `zcurl session create NAME` | Reserve a new name; libcurl handles are allocated lazily on its first request |
 | `zcurl session reset NAME` | Close that session's connections and destroy both its synchronous and concurrent handles, retaining the name, configuration and creation order |
 | `zcurl session configure NAME [options]` | Update defaults for future requests without closing connections |
-| `zcurl session configure NAME --defaults` | Restore standard numeric defaults without closing connections |
+| `zcurl session configure NAME --defaults` | Restore standard request defaults without closing connections |
 | `zcurl session info NAME --result ARRAY` | Copy defaults and the retained-job count into a declared associative array without I/O |
 | `zcurl session jobs NAME --result ARRAY [--state STATE]` | Copy this session's retained request names into an indexed array without I/O |
 | `zcurl session drop NAME` | Close the pool and release the name |
@@ -67,10 +67,11 @@ Interrupting a named request leaves the session usable for subsequent requests.
 
 ## Request defaults
 
-Configure a named session's request and connection timeouts and response limit:
+Configure a named session's timeouts, response limit and TLS CA files:
 
 ```zsh
 zcurl session configure inventory --timeout 2000 --connect-timeout 500 --max-body 65536
+zcurl session configure inventory --cacert /path/to/origin-ca.pem --proxy-cacert /path/to/proxy-ca.pem
 zcurl --session inventory -- https://api.example.com/status
 zcurl http submit batch --session inventory --max-body 1048576 -- https://api.example.com/batch
 zcurl session configure inventory --defaults
@@ -81,13 +82,16 @@ zcurl session configure inventory --defaults
 | `-t` / `--timeout` | 10000 ms | 1..600000 ms |
 | `--connect-timeout` | 3000 ms | 1..600000 ms |
 | `--max-body` | 8388608 bytes | 1..67108864 bytes |
+| `-c` / `--cacert` | No configured override | Origin CA-file path, at most 4096 decoded bytes; empty clears |
+| `--proxy-cacert` | No configured override | HTTPS proxy CA-file path, at most 4096 decoded bytes; empty clears |
 
 Supply at least one setting. Unmentioned settings retain their previous values.
 The entire update is validated before applying it; an invalid value, repeated
 setting (including aliases), unsupported option or missing value returns 2
 without changing configuration or transfer results. `--defaults` must appear
-alone and restores all three standard values. Values are decimal integers in
-separate shell words. Configuration requires an existing named session.
+alone and restores the numeric standard values and clears both CA-file defaults.
+Numeric values are decimal integers; all values occupy separate shell words.
+Configuration requires an existing named session.
 
 Explicit request options override configured values regardless of their position
 relative to `--session`. Overrides apply only to that request. Both synchronous
@@ -106,6 +110,35 @@ reset retains configuration while closing pools; drop/recreate, global reset
 and unload discard it. Restoring `--defaults` changes configuration while
 retaining connections. The 13-/16-field HTTP result shapes are unchanged.
 
+### CA-file defaults
+
+Origin and HTTPS proxy trust remain independent. A default `--cacert` supplies
+origin trust only, while `--proxy-cacert` supplies HTTPS proxy trust only. Explicit
+request options override the corresponding default in either argument order.
+Certificate and hostname verification retain the ordinary HTTP behavior.
+WebSockets continue to take CA files on each open.
+
+`session configure NAME --cacert ''` clears just the origin CA default; an empty
+`--proxy-cacert` clears just the proxy default. Subsequent requests then use the
+normal libcurl trust configuration. Empty CA paths on individual requests remain
+invalid. `session reset` closes pools and retains configured paths; `--defaults`
+clears configured paths and numeric overrides while retaining pools. Drop,
+global reset and unload release the configuration.
+
+Configuration copies path strings without opening, resolving or validating the
+files. Paths may contain spaces, Unicode and newlines, but no NUL, and each is
+limited to 4096 decoded bytes. Nonempty paths are validated by libcurl when used.
+Relative paths resolve in the shell's working directory when the transfer uses
+them; use absolute paths for defaults shared across directory changes. The files'
+contents must remain available and stable through the transfer.
+
+Concurrent submission captures the effective path strings and counts them in
+its existing storage reservation. Reconfiguring or clearing session defaults
+does not change those submitted jobs. This follows libcurl's copying contract
+for [origin CA paths](https://curl.se/libcurl/c/CURLOPT_CAINFO.html) and
+[proxy CA paths](https://curl.se/libcurl/c/CURLOPT_PROXY_CAINFO.html). The CA files
+and parsed TLS trust data are not snapshotted by this module.
+
 ## Inspecting a session
 
 ```zsh
@@ -115,7 +148,7 @@ print -r -- "$session_state[timeout] ms; $session_state[retained_jobs] retained 
 ```
 
 `info NAME -r ARRAY` and `info NAME --result ARRAY` replace the entire declared,
-writable ordinary associative array with these five fields:
+writable ordinary associative array with these seven fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -124,8 +157,11 @@ writable ordinary associative array with these five fields:
 | `connect_timeout` | Default connection timeout in milliseconds |
 | `max_body` | Default response limit in bytes |
 | `retained_jobs` | Pending, completed and cancelled concurrent jobs still owned by this session |
+| `cacert` | Configured origin CA-file path, or empty when unset |
+| `proxy_cacert` | Configured HTTPS proxy CA-file path, or empty when unset |
 
-The defaults describe future requests. Individual requests may override them,
+The two CA-path fields were added in 0.22.0-dev; HTTP transfer snapshots remain
+13/16 fields. The defaults describe future requests. Individual requests may override them,
 and already submitted jobs keep their captured settings. The count excludes
 jobs in other sessions and the unnamed pool, synchronous calls and WebSockets.
 Collection or drop removes a job from the count. A nonzero count explains why
@@ -201,8 +237,8 @@ See libcurl's [multi interface](https://curl.se/libcurl/c/libcurl-multi.html) an
 [option reset semantics](https://curl.se/libcurl/c/curl_easy_reset.html).
 
 Request options still reset after every call. Supply headers, credentials, proxy
-settings and CA files on each request. Only the three numeric settings above
-have configurable defaults. Creating a session does not scope it to a hostname,
+settings on each request. Timeouts, response size and CA-file paths have
+configurable defaults. Creating a session does not scope it to a hostname,
 enable cookies, or start a background worker.
 Environment defaults continue to be read through libcurl's normal behavior.
 
@@ -242,3 +278,9 @@ Session job-list tests cover state filters, HTTP failure versus cancellation,
 submission order, foreign/default-session exclusion, selected waits, scoped
 cleanup, snapshot lifetime, caller options, inherited shells and feature toggles.
 Origin request counters verify that discovery and validation do not drive jobs.
+
+CA-default tests check verified HTTPS and HTTPS proxies, independent trust and
+hostname checks, request overrides in both orders, copied paths after submission,
+Unicode/newline metadata, bounded path storage, atomic validation, reset/clear
+semantics and repeated drop/unload cleanup. Session inspection now has seven
+fields; existing HTTP result shapes remain unchanged.

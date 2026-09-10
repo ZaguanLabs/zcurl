@@ -1,11 +1,21 @@
 /* Included by zcurl.c. Each session owns separate synchronous and concurrent
  * pools. Retained jobs pin the session until collection or drop. */
 #define HTTP_SESSIONS 16
+#define SESSION_CA_LIMIT 4096
 static int session_jobs(struct http_session *s, char **args);
+
+static void
+session_clear_trust(struct http_session *s)
+{
+    free(s->ca);
+    free(s->proxy_ca);
+    s->ca = s->proxy_ca = NULL;
+}
 
 static void
 session_standard_defaults(struct http_session *s)
 {
+    session_clear_trust(s);
     s->timeout = 10000;
     s->connect_timeout = 3000;
     s->max_body = BODY_LIMIT;
@@ -35,6 +45,8 @@ session_request_defaults(struct request *r, unsigned seen)
     if (!(seen & (1u << TIMEOUT))) r->timeout = s->timeout;
     if (!(seen & (1u << CONNECT_TIMEOUT))) r->connect_timeout = s->connect_timeout;
     if (!(seen & (1u << MAX_BODY))) r->max_body = s->max_body;
+    if (!(seen & (1u << CA))) r->ca = s->ca;
+    if (!(seen & (1u << PROXY_CA))) r->proxy_ca = s->proxy_ca;
     return 1;
 }
 
@@ -44,6 +56,9 @@ static int
 session_configure(struct http_session *s, char **args)
 {
     long timeout = s->timeout, connect_timeout = s->connect_timeout, max_body = s->max_body;
+    char *ca = NULL, *proxy_ca = NULL;
+    const char *message = "configure requires timeout/connect-timeout (1..600000 ms), max-body (1..67108864 bytes), cacert/proxy-cacert (at most 4096 bytes), or --defaults alone";
+    int status = 2;
     unsigned seen = 0;
     if (!*args) goto usage;
     if (!strcmp(*args, "--defaults") && !args[1]) {
@@ -52,7 +67,7 @@ session_configure(struct http_session *s, char **args)
     }
     while (*args) {
         char *option = text_argument(*args++), *value;
-        long *target, maximum;
+        long *target = NULL, maximum = 0;
         unsigned bit;
         if (!option) goto usage;
         if (!strcmp(option, "--timeout") || !strcmp(option, "-t")) {
@@ -61,18 +76,36 @@ session_configure(struct http_session *s, char **args)
             bit = 2; target = &connect_timeout; maximum = 600000;
         } else if (!strcmp(option, "--max-body")) {
             bit = 4; target = &max_body; maximum = MAX_BODY_LIMIT;
+        } else if (!strcmp(option, "--cacert") || !strcmp(option, "-c")) {
+            bit = 8;
+        } else if (!strcmp(option, "--proxy-cacert")) {
+            bit = 16;
         } else goto usage;
-        if ((seen & bit) || !*args || !(value = text_argument(*args++)) ||
-            !decimal(value, 1, maximum, target)) goto usage;
+        if ((seen & bit) || !*args || !(value = text_argument(*args++))) goto usage;
         seen |= bit;
+        if (target) {
+            if (!decimal(value, 1, maximum, target)) goto usage;
+        } else {
+            char **path = bit == 8 ? &ca : &proxy_ca;
+            if (strlen(value) > SESSION_CA_LIMIT) goto usage;
+            if (*value && !(*path = strdup(value))) {
+                status = 27;
+                message = "could not copy session CA path";
+                goto usage;
+            }
+        }
     }
     s->timeout = timeout;
     s->connect_timeout = connect_timeout;
     s->max_body = max_body;
+    if (seen & 8) { free(s->ca); s->ca = ca; }
+    if (seen & 16) { free(s->proxy_ca); s->proxy_ca = proxy_ca; }
     return 0;
 usage:
-    zwarnnam("zcurl session", "configure requires timeout/connect-timeout (1..600000 ms), max-body (1..67108864 bytes), or --defaults alone");
-    return 2;
+    free(ca);
+    free(proxy_ca);
+    zwarnnam("zcurl session", "%s", message);
+    return status;
 }
 
 static void
@@ -82,6 +115,7 @@ sessions_cleanup(void)
     while ((s = named_sessions)) {
         named_sessions = s->next;
         close_session(s);
+        session_clear_trust(s);
         free(s->name);
         free(s);
     }
@@ -93,7 +127,7 @@ sessions_cleanup(void)
 static int
 session_info(struct http_session *s, char **args)
 {
-    const char *keys[] = {"name", "timeout", "connect_timeout", "max_body", "retained_jobs"};
+    const char *keys[] = {"name", "timeout", "connect_timeout", "max_body", "retained_jobs", "cacert", "proxy_cacert"};
     uintmax_t numbers[] = {(uintmax_t)s->timeout, (uintmax_t)s->connect_timeout,
                           (uintmax_t)s->max_body, (uintmax_t)s->http_jobs};
     char *option, *target, **values;
@@ -109,9 +143,12 @@ session_info(struct http_session *s, char **args)
         char number[64];
         values[2 * i] = ztrdup(keys[i]);
         if (!i) values[2 * i + 1] = ztrdup(s->name);
-        else {
+        else if (i <= ARRAY_SIZE(numbers)) {
             snprintf(number, sizeof(number), "%ju", numbers[i - 1]);
             values[2 * i + 1] = ztrdup(number);
+        } else {
+            char *path = i == 5 ? s->ca : s->proxy_ca;
+            values[2 * i + 1] = metafy(path ? path : "", path ? (int)strlen(path) : 0, META_DUP);
         }
     }
     values[2 * i] = NULL;
@@ -168,6 +205,7 @@ sessions_command(char **args)
     }
     close_session(s);
     if (!strcmp(operation, "drop")) {
+        session_clear_trust(s);
         *link = s->next;
         free(s->name);
         free(s);

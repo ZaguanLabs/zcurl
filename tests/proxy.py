@@ -437,6 +437,34 @@ def test_https_proxy(env, plain, temp, run, setup):
             if zcurl http collect untrusted -r response; then exit 1; else check $? 60; fi
             check ${#zcurl_http_handles} 0
         ''', 1)
+        # Session trust defaults remain independent and are copied at submit.
+        check('''
+            typeset -A session_state
+            zcurl session create trusted
+            zcurl session configure trusted --cacert "$ZCURL_TEST_CA" --proxy-cacert "$PROXY_CA"
+            zcurl --session trusted "$ZCURL_TEST_HTTPS/tiny"
+            check "$zcurl_body" $'ok\\n'
+            zcurl session info trusted -r session_state
+            check "$session_state[cacert]" "$ZCURL_TEST_CA"
+            check "$session_state[proxy_cacert]" "$PROXY_CA"
+            zcurl http submit retained --session trusted "$ZCURL_TEST_HTTPS/tiny"
+            zcurl session configure trusted --defaults
+            zcurl http wait retained
+            zcurl http collect retained
+            check "$zcurl_body" $'ok\\n'
+            if zcurl --session trusted "$ZCURL_TEST_HTTP/tiny"; then exit 1; else check $? 60; fi
+            zcurl session configure trusted --proxy-cacert "$PROXY_CA"
+            if zcurl --session trusted "$ZCURL_TEST_HTTPS/tiny"; then exit 1; else check $? 60; fi
+            zcurl session configure trusted --cacert "$ZCURL_TEST_CA" --proxy-cacert ''
+            if zcurl --session trusted "$ZCURL_TEST_HTTP/tiny"; then exit 1; else check $? 60; fi
+            zcurl --proxy-cacert "$PROXY_CA" --session trusted "$ZCURL_TEST_HTTP/tiny"
+            zcurl --session trusted --proxy-cacert "$PROXY_CA" "$ZCURL_TEST_HTTP/tiny"
+            zcurl session configure trusted --proxy-cacert "$PROXY_CA"
+            zcurl session reset trusted
+            zcurl --session trusted "$ZCURL_TEST_HTTPS/tiny"
+            if zcurl --session trusted --proxy "${ZCURL_TEST_PROXY/localhost/127.0.0.1}" "$ZCURL_TEST_HTTP/tiny"; then exit 1; else check $? 60; fi
+            zcurl session drop trusted
+        ''', 6)
         # Origin authorization must stay inside the TLS tunnel in both APIs.
         server.require_auth = True
         authenticated = proxy_env['ZCURL_TEST_PROXY'].replace('https://', 'https://fixture:secret@')

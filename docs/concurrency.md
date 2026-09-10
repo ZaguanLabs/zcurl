@@ -1,4 +1,4 @@
-# Concurrent HTTP (0.21.0-dev)
+# Concurrent HTTP (0.22.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
@@ -235,10 +235,10 @@ configuration and upload copies remain owned until collection/drop/reset/unload.
 Every session has its own concurrent pool, retaining connections between
 requests. Use `http submit HANDLE --session NAME` to select an existing
 [named session](sessions.md); omitting the option uses the default concurrent
-pool. Session timeout, connection-timeout and response-size defaults apply at
-submission; explicit request options override them. Each accepted job keeps its
-effective settings, deadline and storage reservation when its session is later
-reconfigured. Wait and poll timeouts are separate and do not use session defaults.
+pool. Session timeout, connection-timeout, response-size and CA-file defaults
+apply at submission; explicit request options override them. Each accepted job keeps its
+effective settings, copied CA paths, deadline and storage reservation when its
+session is later reconfigured. Wait and poll timeouts are separate and do not use session defaults.
 Unknown sessions fail before descriptor preparation. Handles remain in
 one global namespace, and all pools share the 32-job/128-MiB admission limits.
 Session reset/drop rejects retained jobs, including completed or cancelled jobs;
