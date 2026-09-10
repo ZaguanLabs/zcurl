@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.15.0-dev** is intended for trying in a project: methods, request
+Version **0.16.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -385,6 +385,7 @@ callback when you need uninterrupted typing.
 make test        # HTTP/TLS fixtures, API/scoping tests, project loader, PTY signals
 make memcheck    # Valgrind on scripted tests; requires Valgrind
 make ubsan       # separate instrumented module; includes examples and PTY checks
+make asan        # address + undefined behavior checks; matching ASan runtime needed
 make benchmark   # local HTTPS comparison with external curl
 ```
 
@@ -399,6 +400,11 @@ undefined-behavior checks. It leaves the normal module in place and selects the
 instrumented library for loader/example and interactive tests too. Requires a
 compiler with UBSan, its runtime library, and `nm`; see
 [sanitizer setup and scope](docs/sanitizers.md).
+
+`make asan` adds memory access checks in a separate `build/asan/zcurl.so` and
+runs the same full suite. On Linux it preloads the matching GCC ASan runtime
+into test children. The runtime can be selected with `ASAN_RUNTIME`; see the
+[ASan setup](docs/sanitizers.md#addresssanitizer). Leak checks remain in `make memcheck`.
 
 The original prototype's 100-request local HTTPS benchmark measured 15.63 ms
 for the module, 576.91 ms for separate curl processes, and 19.59 ms for one

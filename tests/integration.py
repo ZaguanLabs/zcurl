@@ -155,7 +155,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 @contextlib.contextmanager
-def fixture(module_dir=None, ubsan=False):
+def fixture(module_dir=None, ubsan=False, asan_runtime=None):
     module_dir = (module_dir or ROOT / 'build').resolve()
     if not (module_dir / 'zcurl.so').is_file():
         raise FileNotFoundError(f'no zcurl.so in {module_dir}; build the selected module first')
@@ -194,10 +194,14 @@ def fixture(module_dir=None, ubsan=False):
                    ZCURL_TEST_HTTP=f"http://127.0.0.1:{plain.server_port}",
                    ZCURL_TEST_HTTPS=f"https://localhost:{tls.server_port}",
                    ZCURL_TEST_MISMATCH=f"https://127.0.0.1:{tls.server_port}")
-        if ubsan:
+        if ubsan or asan_runtime:
             # Reports from expected-failure subshells must fail the whole suite
             # too. Per-process logs also preserve diagnostics from PTY shells.
             env['UBSAN_OPTIONS'] = f'halt_on_error=1:print_stacktrace=1:log_path={temp}/ubsan'
+        if asan_runtime:
+            # Zsh is not ASan-linked: load the matching runtime before the module.
+            env['LD_PRELOAD'] = str(asan_runtime) + (':' + env['LD_PRELOAD'] if env.get('LD_PRELOAD') else '')
+            env['ASAN_OPTIONS'] = f'detect_leaks=0:halt_on_error=1:log_path={temp}/asan'
         try:
             yield env, plain, tls, temp
         finally:
@@ -205,11 +209,11 @@ def fixture(module_dir=None, ubsan=False):
                 server.shutdown()
                 server.server_close()
                 thread.join()
-            if ubsan:
-                reports = sorted(temp.glob('ubsan.*'))
+            if ubsan or asan_runtime:
+                reports = sorted([*temp.glob('ubsan.*'), *temp.glob('asan.*')])
                 if reports:
                     diagnostics = '\n'.join(f'{p.name}:\n{p.read_text()}' for p in reports)
-                    raise AssertionError(f'UndefinedBehaviorSanitizer reported errors:\n{diagnostics}')
+                    raise AssertionError(f'Sanitizer reported errors:\n{diagnostics}')
 
 
 def run(env, source):
@@ -559,24 +563,37 @@ if __name__ == "__main__":
     parser.add_argument("--valgrind", action="store_true", help="memory-check scripted tests (requires valgrind)")
     parser.add_argument("--module-dir", type=Path,
                         help="directory containing the module to test (also used by loader/examples)")
-    parser.add_argument("--ubsan", action="store_true", help="fail on sanitizer reports from any child shell")
+    sanitizers = parser.add_mutually_exclusive_group()
+    sanitizers.add_argument("--ubsan", action="store_true", help="check undefined behavior in all child shells")
+    sanitizers.add_argument("--asan", action="store_true", help="check address and undefined behavior errors in all child shells")
+    parser.add_argument("--asan-runtime", type=Path, help="matching shared libasan runtime (required with --asan)")
     args = parser.parse_args()
     if not 1 <= args.count <= 1000:
         parser.error("--count must be between 1 and 1000")
     if args.valgrind and args.benchmark:
         parser.error("run memory checks and benchmarks separately")
-    if args.ubsan and (args.valgrind or args.benchmark):
-        parser.error("run UBSan separately from Valgrind and benchmarks")
+    if (args.ubsan or args.asan) and (args.valgrind or args.benchmark):
+        parser.error("run sanitizers separately from Valgrind and benchmarks")
+    if args.asan != (args.asan_runtime is not None):
+        parser.error('--asan and --asan-runtime must be supplied together')
+    if args.asan:
+        args.asan_runtime = args.asan_runtime.resolve()
+        if not args.asan_runtime.is_file() or any(c.isspace() or c == ':' for c in str(args.asan_runtime)):
+            parser.error('--asan-runtime must be a file whose absolute path contains no whitespace or colon')
     if args.module_dir is None:
-        args.module_dir = ROOT / ('build/ubsan' if args.ubsan else 'build')
+        args.module_dir = ROOT / ('build/asan' if args.asan else 'build/ubsan' if args.ubsan else 'build')
     if not (args.module_dir / 'zcurl.so').is_file():
         parser.error(f'no zcurl.so in {args.module_dir}; build the selected module first')
-    if args.ubsan:
+    if args.ubsan or args.asan:
         symbols = subprocess.run(['nm', '-D', str(args.module_dir / 'zcurl.so')],
                                  capture_output=True, text=True, check=True, timeout=10)
         if '__ubsan_handle_' not in symbols.stdout:
-            parser.error('selected module has no UBSan runtime checks; run make ubsan')
-    with fixture(args.module_dir, args.ubsan) as (env, plain, tls, temp):
+            parser.error('selected module has no UBSan runtime checks; rebuild with the requested sanitizer target')
+        if args.asan and '__asan_init' not in symbols.stdout:
+            parser.error('selected module has no ASan runtime checks; run make asan')
+        if args.ubsan and '__asan_init' in symbols.stdout:
+            parser.error('selected module also requires ASan; use --asan with --asan-runtime')
+    with fixture(args.module_dir, args.ubsan, args.asan_runtime) as (env, plain, tls, temp):
         print(f'Testing module: {Path(env["ZCURL_MODULE_PATH"]) / "zcurl.so"}', flush=True)
         if args.valgrind:
             env["ZCURL_TEST_VALGRIND"] = "1"
@@ -640,3 +657,5 @@ if __name__ == "__main__":
             benchmark(env, tls, args.count)
     if args.ubsan:
         print('PASS: UBSan module checks, including loader, examples, completion and signal PTYs')
+    if args.asan:
+        print('PASS: ASan/UBSan module checks, including loader, examples, completion and signal PTYs')

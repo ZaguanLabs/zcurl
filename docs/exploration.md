@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.15.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.16.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -93,8 +93,8 @@ requests turn out to be the main need.
    whether they need scheduling independent of shell calls. Responsive typing
    and correct timers while ZLE is active and inactive still need separate work.
 6. **Packaging.** Optional [native completion](completion.md) is implemented
-   and exercised in a real ZLE session. A separate [UBSan build](sanitizers.md)
-   now runs the full suite, including loaders, examples and PTYs. Multiple Zsh
+   and exercised in a real ZLE session. Separate [ASan and UBSan builds](sanitizers.md)
+   now run the full suite, including loaders, examples and PTYs. Multiple Zsh
    builds, distributions, other sanitizers and dependency combinations still
    need validation before promising a portable native module.
 

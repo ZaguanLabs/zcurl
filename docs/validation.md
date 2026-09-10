@@ -1,4 +1,4 @@
-# Validation of 0.15.0-dev
+# Validation of 0.16.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -326,6 +326,15 @@ See [reproduction, artifact selection and limits](sanitizers.md). The shell and
 third-party libraries themselves are not instrumented by this target.
 
 ## Memory checks and dependency findings
+
+`make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
+instrumentation. The full suite passes, including all 118 completion cases,
+loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
+preloaded into test children; leak detection is disabled for this target.
+A deliberately overflowing child whose failure was ignored by its parent still
+caused fixture cleanup to fail with the ASan diagnostic. Nine CLI rejection
+cases verified incompatible modes, missing runtime arguments and incorrect
+module selections before fixtures start. See [runtime setup and limits](sanitizers.md).
 
 `make memcheck` runs the scripted test shells under Valgrind with full leak
 checking and an error exit for memory errors and definitely lost allocations.
