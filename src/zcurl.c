@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.18.0-dev"
+#define ZCURL_VERSION "0.19.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -25,6 +25,7 @@ struct http_session {
     CURLM *multi;
     CURLM *http_multi;
     size_t http_jobs;
+    long timeout, connect_timeout, max_body;
 };
 static struct http_session default_session, *named_sessions;
 static pid_t owner;
@@ -444,6 +445,8 @@ static const struct option_spec option_specs[] = {
     {NULL, "--session", SESSION, 1},
 };
 
+static int session_request_defaults(struct request *r, unsigned seen);
+
 static int
 parse_request(char **args, struct request *r)
 {
@@ -565,7 +568,7 @@ parse_request(char **args, struct request *r)
         set_error("usage", "HEAD cannot be combined with data or a different method", 2);
         return 0;
     }
-    return 1;
+    return session_request_defaults(r, seen);
 invalid:
     set_error("usage", "invalid option value, method, or embedded NUL outside request data", 2);
     return 0;
@@ -859,9 +862,13 @@ help(void)
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"
+         "  Named sessions may supply timeout, connect-timeout and max-body defaults.\n"
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl session create|reset|drop NAME\n"
          "  Manage named HTTP pools; preserves transfer results.\n"
+         "zcurl session configure NAME [-t MS] [--connect-timeout MS] [--max-body BYTES]\n"
+         "zcurl session configure NAME --defaults\n"
+         "  Set request defaults or restore standard values; retained jobs are unchanged.\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
          "zcurl headers FIELD --from RAW --result ARRAY [--trailers]\n"

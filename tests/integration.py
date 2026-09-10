@@ -11,6 +11,7 @@ import select
 import shutil
 import signal
 import socket
+import socketserver
 import ssl
 import statistics
 import subprocess
@@ -51,6 +52,29 @@ class Server(http.server.ThreadingHTTPServer):
         self.connections += 1
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         return sock, address
+
+
+@contextlib.contextmanager
+def stalled_tls():
+    """Accept a ClientHello without replying; clients must enforce their budget."""
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.settimeout(8)
+            try:
+                while self.request.recv(4096):
+                    pass
+            except (TimeoutError, ConnectionResetError):
+                pass
+
+    with socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler) as server:
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f'https://127.0.0.1:{server.server_address[1]}/'
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -618,6 +642,12 @@ if __name__ == "__main__":
             assert reply['method'] == 'GET' and reply['body'] == ''
             assert 'authorization' not in {k.lower() for k, _ in reply['headers']}
         assert (temp / 'session-output.bin').read_bytes() == b'file\0session\n\n'
+        with stalled_tls() as stalled_url:
+            defaults = run(dict(env, ZCURL_TEST_STALLED_TLS=stalled_url),
+                           (ROOT / 'tests' / 'session-defaults.zsh').read_text())
+        assert defaults.startswith('PASS: session defaults'), defaults
+        print(defaults)
+        assert (temp / 'defaults-output.bin').stat().st_size <= 2
         tls_before = (tls.connections, tls.request_count)
         concurrent_sessions = run(env, (ROOT / 'tests' / 'session-concurrency.zsh').read_text())
         assert concurrent_sessions.startswith('PASS: named concurrent sessions'), concurrent_sessions
@@ -656,6 +686,7 @@ if __name__ == "__main__":
             typeset -A response
             zcurl session create deferred
             zcurl http submit untouched --session deferred -- "$ZCURL_TEST_HTTP/tiny"
+            zcurl session configure deferred --timeout 2000 --max-body 1
             zcurl http cancel untouched
             zcurl http collect untouched -r response && exit 1
             [[ $response[state] == cancelled && $response[bytes] == 0 ]] || exit 2

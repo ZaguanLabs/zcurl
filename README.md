@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.18.0-dev** is intended for trying in a project: methods, request
+Version **0.19.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -357,12 +357,18 @@ into a pipe or file for a binary consumer.
 
 HTTP callers can create independent pools with `zcurl session create NAME`
 and select one with `--session NAME`. `session reset NAME` closes its connections
-while retaining the name; `session drop NAME` releases it. The read-only
+while retaining the name and configuration; `session drop NAME` releases it. The read-only
 `zcurl_http_sessions` array lists names without I/O. See [named sessions](docs/sessions.md)
 for ownership, limits and cache scope. Concurrent submissions also accept
 `--session NAME`; polling and waiting advance every concurrent pool. Each session
 keeps separate synchronous and concurrent pools. Reset/drop requires collecting
 or dropping all of that session's retained jobs first.
+
+`zcurl session configure NAME --timeout MS --connect-timeout MS --max-body BYTES`
+sets defaults for future requests. Supply any subset; explicit request options
+override them. Already submitted jobs keep their original settings. Use
+`zcurl session configure NAME --defaults` to restore standard values without
+closing connections.
 
 Connection sockets and retained file descriptors are registered as private
 Zsh descriptors above the single-digit redirection range and marked close-on-exec.
@@ -425,4 +431,4 @@ of tiny loopback requests, not predictions for real API latency. Use
 
 [Exploration notes](docs/exploration.md) cover the architectural options.
 Next: integration feedback on the concurrent HTTP and WebSocket APIs,
-pipe/socket streaming with backpressure, per-session defaults, and scheduling beyond explicit polling.
+pipe/socket streaming with backpressure, broader session configuration, and scheduling beyond explicit polling.

@@ -1,4 +1,4 @@
-# Validation of 0.18.0-dev
+# Validation of 0.19.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -116,6 +116,14 @@ admission cleanup and repeated global reset/unload with pending and completed
 jobs. PTY wait-any interruption spans two pools. The same cases run in the
 normal, UBSan, ASan and Valgrind suites (PTYs are excluded from Valgrind).
 
+Session default tests verify timeout/connection-timeout/response limits,
+order-independent explicit overrides, atomic partial patches, standard-value
+restoration, retained pool reuse, targeted reset/recreate, existing job settings
+and storage reservations, inherited admission limits, binary file output, strict
+validation and preserved transfer results. A local TCP peer accepts TLS bytes
+without completing the handshake to verify connection deadlines. Configuration
+while jobs are retained is checked against an origin request counter for no I/O.
+
 ## HTTP compression coverage
 
 - Gzip and zlib deflate generated independently by the loopback fixture; all
@@ -148,7 +156,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 138 resulting command buffers, including:
+completion widget. The test checks 151 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -351,7 +359,7 @@ third-party libraries themselves are not instrumented by this target.
 ## Memory checks and dependency findings
 
 `make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
-instrumentation. The full suite passes, including all 138 completion cases,
+instrumentation. The full suite passes, including all 151 completion cases,
 loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
 preloaded into test children; leak detection is disabled for this target.
 A deliberately overflowing child whose failure was ignored by its parent still
@@ -395,6 +403,6 @@ reported separately. Run benchmarks without concurrent memory checks or other
 heavy work. This is a loopback overhead experiment, not a WAN throughput test.
 
 Pipe/socket streaming, autonomous background transfers, arbitrary fork inheritance,
-automatic redirects, cookies, per-session defaults, HTTP/2/3-specific behavior,
+automatic redirects, cookies, default headers/credentials/routing, HTTP/2/3-specific behavior,
 broader proxy integration and cross-platform ABI compatibility still need their own
 implementation and/or test coverage before being relied on.

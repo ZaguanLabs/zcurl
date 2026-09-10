@@ -33,6 +33,7 @@ if (( CURRENT > 2 )); then
           )
         elif [[ $mode == session ]]; then
           operations=( 'create:create an independent HTTP session'
+            'configure:set session timeout and response-size defaults'
             'reset:close a session pool while retaining its name' 'drop:release a session' )
         else
           operations=(
@@ -73,12 +74,19 @@ if (( CURRENT > 2 )); then
         fi
       fi
       curcontext="${curcontext%:*}:$mode-$operation"
-      [[ $mode == session ]] && return 1
+      [[ $mode == session && $operation != configure ]] && return 1
       ;;
   esac
 fi
 
-if [[ $mode == headers ]]; then
+if [[ $mode == session ]]; then
+  specs=(
+    '(--defaults -t --timeout)'{-t,--timeout}'[default total request timeout]:milliseconds (1..600000):'
+    '(--defaults)--connect-timeout[default connection timeout]:milliseconds (1..600000):'
+    '(--defaults)--max-body[default response size limit]:bytes (1..67108864):'
+    '(- *)--defaults[restore standard timeout and size defaults]'
+  )
+elif [[ $mode == headers ]]; then
   specs=(
     '--from[raw HTTP response headers]:raw header transcript:'
     '(-r --result)'{-r,--result}'[store values in an indexed array]:indexed array:->arrays'
