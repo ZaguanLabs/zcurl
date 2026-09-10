@@ -64,8 +64,9 @@ This uses libcurl's [separate header policy](https://curl.se/libcurl/c/CURLOPT_H
 Proxy URLs may contain credentials using libcurl's URL syntax. The fixture tests
 Basic proxy authentication and verifies that proxy authorization is absent from
 the tunneled origin request. There is no separate proxy-header or authentication
-method option. Per-request routing does not provide named-session isolation:
-connection and authentication caches remain managed by libcurl's shared pools.
+method option. Per-request routing alone does not separate connection and
+authentication caches. Synchronous callers can select independent pools with
+[named sessions](sessions.md); concurrent jobs still use their shared pool.
 
 For an HTTPS proxy with a private CA, set `--proxy-cacert FILE`:
 

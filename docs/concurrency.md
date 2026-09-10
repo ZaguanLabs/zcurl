@@ -228,7 +228,7 @@ publication copies and caller-owned snapshots use additional memory. Request
 configuration and upload copies remain owned until collection/drop/reset/unload.
 
 The concurrent pool retains connections between requests. It is separate from
-the synchronous HTTP pool and WebSocket connections. Synchronous requests and
+the default and named synchronous HTTP pools and WebSocket connections. Synchronous requests and
 WS polling do not advance concurrent HTTP jobs. Concurrent HTTP polling/waiting
 does not advance WebSockets. TLS verification, protocol restrictions, redirect
 behavior, proxy environment handling and absence of a cookie engine match the

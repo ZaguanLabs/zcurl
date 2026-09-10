@@ -12,14 +12,19 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.16.0-dev"
+#define ZCURL_VERSION "0.17.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
 
-static CURL *session;
-static CURLM *pool;
+struct http_session {
+    struct http_session *next;
+    char *name;
+    CURL *easy;
+    CURLM *multi;
+};
+static struct http_session default_session, *named_sessions;
 static pid_t owner;
 static int initialized, busy;
 static char *body, *headers, *error_text, *error_kind, *effective_url, *content_type;
@@ -46,6 +51,7 @@ struct http_input {
 struct request {
     char *url, *ca, *method, *data, *result;
     char *proxy, *noproxy, *proxy_ca;
+    char *session_name;
     size_t data_len;
     long timeout, connect_timeout, max_body;
     int fail_http, head, has_data, has_input, input_fd, has_output, output_fd;
@@ -414,7 +420,7 @@ add_header(struct request *r, const char *value)
 }
 
 enum option_id { CA, TIMEOUT, CONNECT_TIMEOUT, METHOD, HEADER, DATA, RESULT,
-                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD, COMPRESSED, PROXY, NOPROXY, PROXY_CA };
+                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD, COMPRESSED, PROXY, NOPROXY, PROXY_CA, SESSION };
 struct option_spec { const char *short_name, *long_name; enum option_id id; int value; };
 static const struct option_spec option_specs[] = {
     {"-c", "--cacert", CA, 1},
@@ -433,10 +439,11 @@ static const struct option_spec option_specs[] = {
     {"-x", "--proxy", PROXY, 1},
     {NULL, "--noproxy", NOPROXY, 1},
     {NULL, "--proxy-cacert", PROXY_CA, 1},
+    {NULL, "--session", SESSION, 1},
 };
 
 static int
-parse_request(char **args, struct request *r)
+parse_request(char **args, struct request *r, int allow_session)
 {
     int options = 1;
     unsigned seen = 0;
@@ -492,6 +499,9 @@ parse_request(char **args, struct request *r)
         case PROXY: r->proxy = value; break;
         case NOPROXY: r->noproxy = value; break;
         case PROXY_CA: r->proxy_ca = value; if (!*value) goto invalid; break;
+        case SESSION:
+            if (!allow_session || !identifier(value) || strlen(value) > 64) goto invalid;
+            r->session_name = value; break;
         case METHOD:
             if (!token(value, strlen(value))) goto invalid;
             r->method = value;
@@ -560,20 +570,24 @@ invalid:
 }
 
 static void
-close_session(void)
+close_session(struct http_session *s)
 {
-    if (session)
-        curl_easy_cleanup(session);
-    session = NULL;
-    if (pool)
-        curl_multi_cleanup(pool);
-    pool = NULL;
+    if (s->easy)
+        curl_easy_cleanup(s->easy);
+    s->easy = NULL;
+    if (s->multi)
+        curl_multi_cleanup(s->multi);
+    s->multi = NULL;
 }
+
+#include "http_sessions.c"
 
 /* Enter/leave with signals queued. Shell traps run only outside libcurl. */
 static CURLcode
-drive_request(char *diagnostic, int *started)
+drive_request(struct http_session *s, char *diagnostic, int *started)
 {
+    CURL *session = s->easy;
+    CURLM *pool = s->multi;
     CURLMcode mc = curl_multi_add_handle(pool, session);
     CURLcode rc = CURLE_FAILED_INIT;
     int attached = mc == CURLM_OK;
@@ -613,7 +627,7 @@ drive_request(char *diagnostic, int *started)
         rc = CURLE_FAILED_INIT;
         /* A failed multi stack must not be reused for subsequent transfers. */
         curl_multi_cleanup(pool);
-        pool = NULL;
+        s->multi = NULL;
     }
     return rc;
 }
@@ -721,37 +735,43 @@ perform_request(struct request *r)
     CURLcode rc = CURLE_OK;
     char *info = NULL;
     int started = 0;
+    struct http_session *s = r->session_name ? find_session(r->session_name) : &default_session;
+
+    if (!s) {
+        set_error("state", "unknown HTTP session; create it before requesting", 2);
+        return;
+    }
 
     if (!prepare_input(r, &input)) return;
     if (!prepare_output(r, &b)) { close_input(&input); return; }
-    if (!session && !(session = curl_easy_init())) {
+    if (!s->easy && !(s->easy = curl_easy_init())) {
         rc = CURLE_OUT_OF_MEMORY;
         goto done;
     }
-    if (!pool && !(pool = curl_multi_init())) {
+    if (!s->multi && !(s->multi = curl_multi_init())) {
         rc = CURLE_OUT_OF_MEMORY;
         goto done;
     }
     /* Reset per-request options; preserve the connection, DNS and TLS caches. */
-    curl_easy_reset(session);
-    rc = configure_http(session, r, &b, &h, &input, diagnostic, 0);
+    curl_easy_reset(s->easy);
+    rc = configure_http(s->easy, r, &b, &h, &input, diagnostic, 0);
     if (rc != CURLE_OK) goto done;
 
-    rc = drive_request(diagnostic, &started);
+    rc = drive_request(s, diagnostic, &started);
     if (!started)
         goto done; /* getinfo may otherwise report a previous transfer. */
-    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &status);
-    curl_easy_getinfo(session, CURLINFO_NUM_CONNECTS, &connects);
-    curl_easy_getinfo(session, CURLINFO_TOTAL_TIME_T, &elapsed);
-    if (curl_easy_getinfo(session, CURLINFO_EFFECTIVE_URL, &info) == CURLE_OK && info)
+    curl_easy_getinfo(s->easy, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_getinfo(s->easy, CURLINFO_NUM_CONNECTS, &connects);
+    curl_easy_getinfo(s->easy, CURLINFO_TOTAL_TIME_T, &elapsed);
+    if (curl_easy_getinfo(s->easy, CURLINFO_EFFECTIVE_URL, &info) == CURLE_OK && info)
         replace_text(&effective_url, info, strlen(info));
     info = NULL;
-    if (curl_easy_getinfo(session, CURLINFO_CONTENT_TYPE, &info) == CURLE_OK && info)
+    if (curl_easy_getinfo(s->easy, CURLINFO_CONTENT_TYPE, &info) == CURLE_OK && info)
         replace_text(&content_type, info, strlen(info));
 done:
     /* Remove every pointer to this request before releasing its storage. */
-    if (session)
-        curl_easy_reset(session);
+    if (s->easy)
+        curl_easy_reset(s->easy);
     close_input(&input);
     if (!close_output(&b) && rc == CURLE_OK) rc = CURLE_WRITE_ERROR;
     http_status = status;
@@ -830,10 +850,13 @@ help(void)
          "  -x, --proxy URL          Override HTTP proxy; empty disables proxies\n"
          "      --noproxy HOSTS      Override proxy bypass list; empty bypasses none\n"
          "      --proxy-cacert FILE   PEM trust file for an HTTPS proxy\n"
+         "      --session NAME       Use a named synchronous HTTP session\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
+         "zcurl session create|reset|drop NAME\n"
+         "  Manage named synchronous HTTP pools; preserves transfer results.\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
          "zcurl headers FIELD --from RAW --result ARRAY [--trailers]\n"
@@ -871,6 +894,10 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
         result = headers_command(args + 1);
         goto finished;
     }
+    if (args[0] && (control = text_argument(args[0])) && !strcmp(control, "session")) {
+        result = sessions_command(args + 1);
+        goto finished;
+    }
     clear_result();
     r.timeout = 10000;
     r.connect_timeout = 3000;
@@ -893,13 +920,13 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
             goto done;
         }
         if (!strcmp(control, "--reset")) {
-            close_session();
+            sessions_cleanup();
             websocket_cleanup();
             http_cleanup();
             goto done;
         }
     }
-    if (parse_request(args, &r))
+    if (parse_request(args, &r, 1))
         perform_request(&r);
     if (r.result)
         publish_result(r.result, RESULT_HTTP);
@@ -963,6 +990,29 @@ ws_handles_get(UNUSED(Param pm))
     return names;
 }
 
+static char **
+http_sessions_get(UNUSED(Param pm))
+{
+    struct http_session *s;
+    size_t count = 0, i = 0;
+    char **names;
+    int was_busy = busy;
+    queue_signals();
+    busy = 1;
+    if (getpid() == owner)
+        for (s = named_sessions; s; s = s->next) ++count;
+    names = (char **)zhalloc((count + 1) * sizeof(*names));
+    if (count)
+        for (s = named_sessions; s; s = s->next) names[i++] = dupstring(s->name);
+    names[count] = NULL;
+    unqueue_signals();
+    busy = was_busy;
+    return names;
+}
+
+static const struct gsu_array http_sessions_gsu = {
+    http_sessions_get, NULL, stdunsetfn
+};
 static const struct gsu_array http_handles_gsu = {
     http_handles_get, NULL, stdunsetfn
 };
@@ -972,6 +1022,7 @@ static const struct gsu_array ws_handles_gsu = {
 static const struct paramdef handle_parameters[] = {
     SPECIALPMDEF("zcurl_http_handles", PM_ARRAY | PM_READONLY, &http_handles_gsu, NULL, NULL),
     SPECIALPMDEF("zcurl_ws_handles", PM_ARRAY | PM_READONLY, &ws_handles_gsu, NULL, NULL),
+    SPECIALPMDEF("zcurl_http_sessions", PM_ARRAY | PM_READONLY, &http_sessions_gsu, NULL, NULL),
 };
 
 static struct builtin builtins[] = {
@@ -1037,12 +1088,12 @@ int finish_(UNUSED(Module m))
     if (getpid() == owner) {
         websocket_cleanup();
         http_cleanup();
-        close_session();
+        sessions_cleanup();
         if (initialized)
             curl_global_cleanup();
     }
-    session = NULL;
-    pool = NULL;
+    default_session = (struct http_session){0};
+    named_sessions = NULL;
     websockets = NULL;
     http_jobs = NULL;
     http_pool = NULL;

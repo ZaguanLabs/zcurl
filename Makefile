@@ -14,7 +14,7 @@ build/ubsan/zcurl.so: MODULE_SANITIZER_FLAGS = -O1 -g -fno-omit-frame-pointer -f
 build/asan/zcurl.so: MODULE_SANITIZER_FLAGS = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -L"$(dir $(ASAN_RUNTIME))"
 build/asan/zcurl.so: MODULE_ASAN_RUNTIME = $(ASAN_RUNTIME)
 
-build/zcurl.so build/ubsan/zcurl.so build/asan/zcurl.so: src/zcurl.c src/websocket.c src/http_async.c src/http_headers.c $(ZSH_HEADERS) Makefile
+build/zcurl.so build/ubsan/zcurl.so build/asan/zcurl.so: src/zcurl.c src/websocket.c src/http_async.c src/http_headers.c src/http_sessions.c $(ZSH_HEADERS) Makefile
 	@pkg-config --atleast-version=8.16.0 libcurl || { echo 'libcurl development files >=8.16.0 are required.'; exit 1; }
 	@test -f "$(ZSH_SRC)/Src/zsh.mdh" || { echo 'Prepare Zsh headers first; see README.md.'; exit 1; }
 	@test -z "$(MODULE_ASAN_RUNTIME)" || test -f "$(MODULE_ASAN_RUNTIME)" || { echo 'ASan runtime missing; install the matching compiler runtime or set ASAN_RUNTIME.'; exit 1; }

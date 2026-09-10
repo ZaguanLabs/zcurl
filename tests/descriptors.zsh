@@ -35,6 +35,8 @@ protected_fd() {
 # easy handles are gone, so closing cached connections also tests callback lifetime.
 zcurl -- "$ZCURL_TEST_HTTP/tiny"
 zcurl -c "$ZCURL_TEST_CA" -- "$ZCURL_TEST_HTTPS/tiny"
+zcurl session create protected
+zcurl --session protected -c "$ZCURL_TEST_CA" "$ZCURL_TEST_HTTPS/tiny"
 zcurl http submit plain -- "$ZCURL_TEST_HTTP/tiny"
 zcurl http wait plain
 zcurl http collect plain
@@ -44,7 +46,7 @@ zcurl http collect secure
 zcurl ws open plain -- "$ws_url/ws"
 zcurl ws open secure -c "$ZCURL_TEST_CA" -- "$wss_url/ws"
 socket_fds
-check ${#sockets} 6
+check ${#sockets} 7
 for private_fd in $sockets; do protected_fd $private_fd; done
 
 # Check the actual descriptor flags in the parent, as well as the absence of

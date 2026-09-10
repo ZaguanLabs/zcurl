@@ -1,22 +1,23 @@
 # Handle discovery (0.9.0-dev)
 
-The native module exposes two read-only special indexed arrays:
+The native module exposes read-only special indexed arrays:
 
 | Parameter | Contents |
 | --- | --- |
 | `zcurl_http_handles` | All retained concurrent HTTP request names, in submission order |
 | `zcurl_ws_handles` | All retained WebSocket names, in successful open order |
+| `zcurl_http_sessions` | Named synchronous HTTP sessions, in creation order; see [session lifecycle](sessions.md) |
 
 Each expansion reads the current registry without invoking `zcurl`, touching
 the network, processing deadlines, or changing transfer results. The arrays
 are independent of result snapshots and contain names only, with no status
 filter. The namespaces remain separate, so the same name can appear in both.
-Synchronous HTTP has no named handle and contributes no entry.
+Synchronous requests have no job handle; their named session registry is separate.
 
 HTTP entries remain after completion or cancellation until collection or drop
 releases them. WebSocket entries remain after closure or error until drop.
 Failed submissions/opens add no entry. Reusing a released name adds it at the
-end. Reset empties both arrays; unloading removes the parameters entirely.
+end. Global reset empties all three arrays; unloading removes the parameters entirely.
 
 Copy an array directly in the owning shell when it must survive later changes:
 

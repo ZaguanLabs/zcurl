@@ -356,7 +356,7 @@ http_command(char **args)
         replace_text(&handle_text, name, strlen(name));
     }
     if (!strcmp(op, "submit")) {
-        if (parse_request(args, &r) && (j = http_submit(name, &r))) {
+        if (parse_request(args, &r, 0) && (j = http_submit(name, &r))) {
             curl_code = CURLE_OK;
             http_snapshot(j, "submitted");
         }

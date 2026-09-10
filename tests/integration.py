@@ -410,11 +410,11 @@ def interrupt_test(env, plain):
     try:
         os.write(fd, (LOAD + 'print -r -- PTY_READY\n').encode())
         wait_for(b"\r\nPTY_READY\r\n")
-        os.write(fd, b'zcurl -t 10000 "$ZCURL_TEST_HTTP/hang"\n')
+        os.write(fd, b'zcurl session create interrupted; zcurl --session interrupted -t 10000 "$ZCURL_TEST_HTTP/hang"\n')
         assert plain.slow_started.wait(4), "PTY request never started"
         start = time.monotonic()
         os.write(fd, b"\x03")
-        os.write(fd, b'zcurl "$ZCURL_TEST_HTTP/tiny"; print -r -- "RECOVERED:$zcurl_http_status"\n')
+        os.write(fd, b'zcurl --session interrupted "$ZCURL_TEST_HTTP/tiny"; print -r -- "RECOVERED:$zcurl_http_status"\n')
         wait_for(b"\r\nRECOVERED:200\r\n", timeout=3)
         elapsed = time.monotonic() - start
         print(f"PASS: PTY Ctrl-C interrupts a stalled request; next request succeeds ({elapsed:.2f}s)")
@@ -425,13 +425,14 @@ def interrupt_test(env, plain):
         assert plain.slow_started.wait(4), "mutation test request never started"
         os.kill(pid, signal.SIGUSR1)
         wait_for(b"\r\nMUTATION:2:result:changed\r\n")
-        os.write(fd, b'TRAPUSR1() { zcurl "$ZCURL_TEST_HTTP/tiny"; print -r -- "REENTRY:$?"; zmodload -u zcurl; print -r -- "UNLOAD:$?"; }; print -r -- REENTRY_READY\n')
+        os.write(fd, b'TRAPUSR1() { zcurl "$ZCURL_TEST_HTTP/tiny"; print -r -- "REENTRY:$?"; zcurl session drop interrupted; print -r -- "SESSION_DROP:$?"; zmodload -u zcurl; print -r -- "UNLOAD:$?"; }; print -r -- REENTRY_READY\n')
         wait_for(b"\r\nREENTRY_READY\r\n")
         plain.slow_started.clear()
-        os.write(fd, b'zcurl "$ZCURL_TEST_HTTP/slow"; print -r -- "OUTER:$?:$zcurl_complete"\n')
+        os.write(fd, b'zcurl --session interrupted "$ZCURL_TEST_HTTP/slow"; print -r -- "OUTER:$?:$zcurl_complete"\n')
         assert plain.slow_started.wait(4), "reentry test request never started"
         os.kill(pid, signal.SIGUSR1)
         wait_for(b"\r\nREENTRY:2\r\n")
+        wait_for(b"\r\nSESSION_DROP:2\r\n")
         wait_for(b"\r\nUNLOAD:1\r\n")
         wait_for(b"\r\nOUTER:0:1\r\n")
         print("PASS: PTY signal traps cannot reenter/unload an active module or overwrite a changed result target")
@@ -603,6 +604,20 @@ if __name__ == "__main__":
         completion.test(env, plain, temp)
         compression.test(env, plain, temp, run)
         proxy.test(env, plain, temp, run)
+        session_before = (plain.connections, tls.connections, plain.request_count, tls.request_count)
+        session_result = run(env, (ROOT / 'tests' / 'sessions.zsh').read_text())
+        session_after = (plain.connections, tls.connections, plain.request_count, tls.request_count)
+        assert tuple(b - a for a, b in zip(session_before, session_after)) == (3, 6, 3, 17), (session_before, session_after)
+        assert session_result.startswith('PASS: named HTTP sessions'), session_result
+        print(session_result)
+        alpha = json.loads((temp / 'session-alpha.json').read_text())
+        assert alpha['method'] == 'POST' and bytes.fromhex(alpha['body']) == b'owned\0\n\n'
+        assert dict(alpha['headers'])['Authorization'] == 'Bearer alpha'
+        for name in ('reset', 'beta'):
+            reply = json.loads((temp / f'session-{name}.json').read_text())
+            assert reply['method'] == 'GET' and reply['body'] == ''
+            assert 'authorization' not in {k.lower() for k, _ in reply['headers']}
+        assert (temp / 'session-output.bin').read_bytes() == b'file\0session\n\n'
         before = plain.request_count
         print(run(env, (ROOT / 'tests' / 'handles.zsh').read_text()))
         assert plain.request_count == before + 4, 'handle discovery caused unexpected HTTP I/O'

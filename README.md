@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.16.0-dev** is intended for trying in a project: methods, request
+Version **0.17.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -250,6 +250,7 @@ zcurl --reset
 | `-x`, `--proxy URL` | Override the proxy for this HTTP request; an empty string disables proxies |
 | `--noproxy HOSTS` | Override the comma-separated bypass list; `'*'` bypasses all, `''` bypasses none |
 | `--proxy-cacert FILE` | PEM trust file for an HTTPS proxy, separate from origin `--cacert` |
+| `--session NAME` | Use an existing named synchronous HTTP session |
 | `-c`, `--cacert FILE` | PEM trust file, with hostname verification still enabled |
 | `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
 | `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |
@@ -354,6 +355,12 @@ into a pipe or file for a binary consumer.
 
 ## Session and execution model
 
+Synchronous callers can create independent pools with `zcurl session create NAME`
+and select one with `--session NAME`. `session reset NAME` closes its connections
+while retaining the name; `session drop NAME` releases it. The read-only
+`zcurl_http_sessions` array lists names without I/O. See [named sessions](docs/sessions.md)
+for ownership, limits and cache scope.
+
 Connection sockets and retained file descriptors are registered as private
 Zsh descriptors above the single-digit redirection range and marked close-on-exec.
 Ordinary `{fd}` closure and duplication are rejected. See
@@ -363,7 +370,7 @@ The following describes synchronous HTTP. Explicit polling is documented in
 the [concurrent HTTP contract](docs/concurrency.md) and
 [WebSocket contract](docs/websocket.md#scheduling-and-ownership).
 
-The module owns one persistent easy handle and multi handle. A synchronous
+Each synchronous pool owns an easy handle and multi handle. A synchronous
 request is driven with `curl_multi_perform` and `curl_multi_poll`; poll waits
 are capped at 100 ms and libcurl can shorten them for its own timers. Zsh
 signals are queued during libcurl calls and result publication, then processed
@@ -415,4 +422,4 @@ of tiny loopback requests, not predictions for real API latency. Use
 
 [Exploration notes](docs/exploration.md) cover the architectural options.
 Next: integration feedback on the concurrent HTTP and WebSocket APIs,
-pipe/socket streaming with backpressure, named HTTP sessions, and scheduling beyond explicit polling.
+pipe/socket streaming with backpressure, named concurrent HTTP pools, and scheduling beyond explicit polling.

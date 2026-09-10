@@ -11,7 +11,7 @@ local mode=http operation=request
 if (( CURRENT > 2 )); then
   case $words[2] in
     --help|--version|--reset) return 1 ;;
-    http|ws|headers)
+    http|ws|headers|session)
       mode=$words[2]
       compset -n 2
       if [[ $mode == headers ]]; then
@@ -31,6 +31,9 @@ if (( CURRENT > 2 )); then
             'cancel:cancel a pending request' 'drop:release a request'
             'info:inspect a request without network I/O'
           )
+        elif [[ $mode == session ]]; then
+          operations=( 'create:create an independent HTTP session'
+            'reset:close a session pool while retaining its name' 'drop:release a session' )
         else
           operations=(
             'open:open a WebSocket connection' 'send:queue a frame'
@@ -55,6 +58,9 @@ if (( CURRENT > 2 )); then
             elif [[ $mode == ws && $operation != open &&
                     ${parameters[zcurl_ws_handles]-} == *array*readonly*special* ]]; then
               handles=( "${zcurl_ws_handles[@]}" )
+            elif [[ $mode == session && $operation != create &&
+                    ${parameters[zcurl_http_sessions]-} == *array*readonly*special* ]]; then
+              handles=( "${zcurl_http_sessions[@]}" )
             fi
             if (( $#handles )); then
               _wanted handles expl "$mode handle" compadd -a handles
@@ -67,6 +73,7 @@ if (( CURRENT > 2 )); then
         fi
       fi
       curcontext="${curcontext%:*}:$mode-$operation"
+      [[ $mode == session ]] && return 1
       ;;
   esac
 fi
@@ -108,6 +115,7 @@ case $mode:$operation in
       '--output-fd[write the response directly to a regular file]:writable regular-file descriptor:'
     )
     if [[ $operation == request ]]; then
+      specs+=( '--session[use an independent synchronous HTTP pool]:HTTP session:->http-sessions' )
       specs+=( '1:URL or command:->top' )
       if (( $#words == 2 )); then
         specs+=( '(- : *)--help[show usage]' '(- : *)--version[show versions]'
@@ -156,6 +164,14 @@ esac
 
 _arguments -C -0 -S "$specs[@]" && return 0
 case $state in
+  http-sessions)
+    if [[ ${parameters[zcurl_http_sessions]-} == *array*readonly*special* ]]; then
+      handles=( "${zcurl_http_sessions[@]}" )
+      _wanted sessions expl 'HTTP session' compadd -a handles
+    else
+      _message 'HTTP session name'
+    fi
+    ;;
   http-handles)
     if [[ ${parameters[zcurl_http_handles]-} == *array*readonly*special* ]]; then
       handles=( "${zcurl_http_handles[@]}" )
@@ -166,7 +182,8 @@ case $state in
     ;;
   top)
     if (( CURRENT == 2 )); then
-      operations=( 'http:concurrent HTTP requests' 'ws:persistent WebSockets' 'headers:look up response header values' )
+      operations=( 'http:concurrent HTTP requests' 'ws:persistent WebSockets' 'headers:look up response header values'
+        'session:manage independent synchronous HTTP pools' )
       _describe -t commands 'command' operations
     fi
     _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https://
