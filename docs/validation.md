@@ -1,4 +1,4 @@
-# Validation of 0.20.0-dev
+# Validation of 0.21.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -130,6 +130,13 @@ survival, dynamic scope, disabled discovery and strict destination validation.
 Failed-transfer and pending-job globals remain unchanged. Origin connection and
 request counts independently verify no inspection I/O and preserved pool reuse.
 
+Session job discovery tests cover all/pending/done/cancelled selections,
+HTTP failure classification, submission order, empty lists, foreign/default
+session exclusion, selected waits, scoped cleanup and copied-name lifetime.
+Destination validation, invalid options, dynamic scope, inherited shells and
+feature toggles preserve results. Origin request counts detect discovery I/O.
+The shared indexed-array validator also runs through the header lookup suite.
+
 ## HTTP compression coverage
 
 - Gzip and zlib deflate generated independently by the loopback fixture; all
@@ -162,7 +169,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 160 resulting command buffers, including:
+completion widget. The test checks 174 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -365,7 +372,7 @@ third-party libraries themselves are not instrumented by this target.
 ## Memory checks and dependency findings
 
 `make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
-instrumentation. The full suite passes, including all 160 completion cases,
+instrumentation. The full suite passes, including all 174 completion cases,
 loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
 preloaded into test children; leak detection is disabled for this target.
 A deliberately overflowing child whose failure was ignored by its parent still

@@ -1,18 +1,5 @@
 /* Included by zcurl.c. Query saved raw headers without touching transfer state.
  * Signals remain queued throughout parsing and transactional publication. */
-static Param
-header_array(char *name)
-{
-    Param pm;
-    int forbidden = PM_READONLY | PM_SPECIAL | PM_TIED | PM_AUTOLOAD | PM_UNIQUE |
-        PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z | PM_LOWER | PM_UPPER | PM_RESTRICTED;
-    if (!identifier(name)) return NULL;
-    pm = (Param)gethashnode2(paramtab, name);
-    if (!pm || PM_TYPE(pm->node.flags) != PM_ARRAY ||
-        (pm->node.flags & forbidden) || pm->gsu.a != &stdarray_gsu) return NULL;
-    return pm;
-}
-
 /* ASCII only: field-name matching must not depend on the shell's locale. */
 static int
 header_name_equal(const char *line, size_t length, const char *field, size_t field_length)
@@ -143,7 +130,7 @@ headers_command(char **args)
             }
         } else {
             target = text_argument(*args++);
-            if (!target || !header_array(target)) {
+            if (!target || !indexed_result_parameter(target)) {
                 message = "--result requires a declared writable ordinary indexed array without converting or unique attributes";
                 goto done;
             }

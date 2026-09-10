@@ -35,6 +35,13 @@ Copies survive reset and unload, but do not keep handles alive. A stored name
 can become stale or be reused; scripts sharing the module should track their
 own accepted names for cleanup. Reading the array makes no ownership claim.
 
+To discover only one named session's HTTP requests, use
+`zcurl session jobs NAME --result ARRAY` with a declared ordinary indexed array.
+Optional `--state all|pending|done|cancelled` filters the recorded state without
+processing deadlines or network I/O. The result preserves submission order and
+last-transfer globals. See [session job selection](sessions.md#finding-and-cleaning-up-a-sessions-jobs)
+for scoped cleanup and snapshot ownership.
+
 The parameters cannot be assigned or unset normally. They are separate module
 features; disabling discovery does not release handles, and reenabling it
 exposes the current registry:

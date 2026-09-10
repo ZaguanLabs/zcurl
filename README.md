@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.20.0-dev** is intended for trying in a project: methods, request
+Version **0.21.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -370,7 +370,9 @@ override them. Already submitted jobs keep their original settings. Use
 `zcurl session configure NAME --defaults` to restore standard values without
 closing connections. `zcurl session info NAME --result ARRAY` copies the current
 defaults and retained-job count into a declared associative array without I/O
-or changing the last transfer result.
+or changing the last transfer result. `zcurl session jobs NAME --result ARRAY`
+lists that session's retained request names in an indexed array, optionally
+filtered with `--state pending|done|cancelled`, for selected waits and cleanup.
 
 Connection sockets and retained file descriptors are registered as private
 Zsh descriptors above the single-digit redirection range and marked close-on-exec.

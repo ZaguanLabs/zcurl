@@ -21,6 +21,56 @@ struct http_job {
 static struct http_job *http_jobs;
 static size_t http_reserved;
 
+static const char *
+http_job_state(struct http_job *j)
+{
+    return j->cancelled ? "cancelled" : j->done ? "done" : "pending";
+}
+
+/* Management query: copy this session's names in submission order, without
+ * expiring/driving jobs or replacing the caller's last transfer result. */
+static int
+session_jobs(struct http_session *s, char **args)
+{
+    char *target = NULL, *state = NULL, **values;
+    struct http_job *j;
+    size_t count = 0;
+    unsigned seen = 0;
+    while (*args) {
+        char *option = text_argument(*args++), *value;
+        unsigned bit;
+        if (!option) goto usage;
+        if (!strcmp(option, "--result") || !strcmp(option, "-r")) bit = 1;
+        else if (!strcmp(option, "--state")) bit = 2;
+        else goto usage;
+        if ((seen & bit) || !*args || !(value = text_argument(*args++))) goto usage;
+        seen |= bit;
+        if (bit == 1) {
+            if (!indexed_result_parameter(value)) goto usage;
+            target = value;
+        } else {
+            if (!strcmp(value, "all")) state = NULL;
+            else if (!strcmp(value, "pending") || !strcmp(value, "done") || !strcmp(value, "cancelled")) state = value;
+            else goto usage;
+        }
+    }
+    if (!target) goto usage;
+    values = zalloc((s->http_jobs + 1) * sizeof(*values));
+    for (j = http_jobs; j; j = j->next) {
+        if (j->session == s && (!state || !strcmp(state, http_job_state(j))))
+            values[count++] = ztrdup(j->name);
+    }
+    values[count] = NULL;
+    if (!setaparam(target, values)) {
+        zwarnnam("zcurl session", "could not publish session jobs");
+        return 2;
+    }
+    return 0;
+usage:
+    zwarnnam("zcurl session", "jobs requires --result ARRAY (ordinary writable indexed array), with optional --state all|pending|done|cancelled");
+    return 2;
+}
+
 static struct http_job *
 http_find(const char *name)
 {
@@ -100,7 +150,7 @@ http_finish(struct http_job *j, CURLcode code)
 static void
 http_snapshot(struct http_job *j, const char *event)
 {
-    const char *state = j->cancelled ? "cancelled" : j->done ? "done" : "pending";
+    const char *state = http_job_state(j);
     replace_text(&handle_text, j->name, strlen(j->name));
     replace_text(&state_text, state, strlen(state));
     replace_text(&event_text, event, strlen(event));

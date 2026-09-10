@@ -1,6 +1,7 @@
 /* Included by zcurl.c. Each session owns separate synchronous and concurrent
  * pools. Retained jobs pin the session until collection or drop. */
 #define HTTP_SESSIONS 16
+static int session_jobs(struct http_session *s, char **args);
 
 static void
 session_standard_defaults(struct http_session *s)
@@ -129,13 +130,14 @@ sessions_command(char **args)
     struct http_session *s, **link;
     char *operation, *name;
     size_t count = 0;
-    const char *message = "use zcurl session create|reset|drop|configure|info NAME (ASCII identifier, at most 64 characters)";
+    const char *message = "use zcurl session create|reset|drop|configure|info|jobs NAME (ASCII identifier, at most 64 characters)";
     int status = 2;
     if (!args[0] || !args[1] || !(operation = text_argument(args[0])) ||
         !(name = text_argument(args[1])) || !identifier(name) || strlen(name) > 64) goto error;
-    if (!strcmp(operation, "configure") || !strcmp(operation, "info")) {
+    if (!strcmp(operation, "configure") || !strcmp(operation, "info") || !strcmp(operation, "jobs")) {
         s = find_session(name);
         if (!s) { message = "unknown HTTP session"; goto error; }
+        if (!strcmp(operation, "jobs")) return session_jobs(s, args + 2);
         return !strcmp(operation, "info") ? session_info(s, args + 2) : session_configure(s, args + 2);
     }
     if (args[2]) goto error;

@@ -35,6 +35,7 @@ if (( CURRENT > 2 )); then
           operations=( 'create:create an independent HTTP session'
             'configure:set session timeout and response-size defaults'
             'info:inspect session defaults and retained job count'
+            'jobs:list retained requests in a session'
             'reset:close a session pool while retaining its name' 'drop:release a session' )
         else
           operations=(
@@ -75,12 +76,17 @@ if (( CURRENT > 2 )); then
         fi
       fi
       curcontext="${curcontext%:*}:$mode-$operation"
-      [[ $mode == session && $operation != (configure|info) ]] && return 1
+      [[ $mode == session && $operation != (configure|info|jobs) ]] && return 1
       ;;
   esac
 fi
 
-if [[ $mode == session && $operation == info ]]; then
+if [[ $mode == session && $operation == jobs ]]; then
+  specs=(
+    '(-r --result)'{-r,--result}'[store session request names]:indexed array:->arrays'
+    '--state[filter retained request state]:state:(all pending done cancelled)'
+  )
+elif [[ $mode == session && $operation == info ]]; then
   specs=( '(-r --result)'{-r,--result}'[store session information]:associative array:->associations' )
 elif [[ $mode == session ]]; then
   specs=(

@@ -642,6 +642,11 @@ if __name__ == "__main__":
             assert reply['method'] == 'GET' and reply['body'] == ''
             assert 'authorization' not in {k.lower() for k, _ in reply['headers']}
         assert (temp / 'session-output.bin').read_bytes() == b'file\0session\n\n'
+        jobs_before = plain.request_count
+        session_jobs = run(env, (ROOT / 'tests' / 'session-jobs.zsh').read_text())
+        assert session_jobs.startswith('PASS: session job discovery'), session_jobs
+        assert plain.request_count == jobs_before + 2, 'session job discovery caused unexpected I/O'
+        print(session_jobs)
         info_before = (plain.connections, plain.request_count)
         session_info = run(env, (ROOT / 'tests' / 'session-info.zsh').read_text())
         assert session_info.startswith('PASS: session information'), session_info

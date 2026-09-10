@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.20.0-dev"
+#define ZCURL_VERSION "0.21.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -387,6 +387,19 @@ result_parameter(char *name)
     if (!pm || PM_TYPE(pm->node.flags) != PM_HASHED ||
         (pm->node.flags & forbidden) || pm->gsu.h != &stdhash_gsu)
         return NULL;
+    return pm;
+}
+
+static Param
+indexed_result_parameter(char *name)
+{
+    Param pm;
+    int forbidden = PM_READONLY | PM_SPECIAL | PM_TIED | PM_AUTOLOAD | PM_UNIQUE |
+        PM_LEFT | PM_RIGHT_B | PM_RIGHT_Z | PM_LOWER | PM_UPPER | PM_RESTRICTED;
+    if (!identifier(name)) return NULL;
+    pm = (Param)gethashnode2(paramtab, name);
+    if (!pm || PM_TYPE(pm->node.flags) != PM_ARRAY ||
+        (pm->node.flags & forbidden) || pm->gsu.a != &stdarray_gsu) return NULL;
     return pm;
 }
 
@@ -869,6 +882,8 @@ help(void)
          "zcurl session configure NAME [-t MS] [--connect-timeout MS] [--max-body BYTES]\n"
          "zcurl session configure NAME --defaults\n"
          "  Set request defaults or restore standard values; retained jobs are unchanged.\n"
+         "zcurl session jobs NAME --result ARRAY [--state all|pending|done|cancelled]\n"
+         "  List retained HTTP names in an indexed array without I/O or result changes.\n"
          "zcurl session info NAME --result ARRAY\n"
          "  Inspect defaults and retained job count; preserves transfer results.\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"

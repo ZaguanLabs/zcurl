@@ -1,4 +1,4 @@
-# Named HTTP sessions (0.20.0-dev)
+# Named HTTP sessions (0.21.0-dev)
 
 Named sessions give HTTP callers independent libcurl connection pools.
 Create a session explicitly, then select it on each request:
@@ -31,6 +31,7 @@ WebSocket names occupy independent namespaces.
 | `zcurl session configure NAME [options]` | Update defaults for future requests without closing connections |
 | `zcurl session configure NAME --defaults` | Restore standard numeric defaults without closing connections |
 | `zcurl session info NAME --result ARRAY` | Copy defaults and the retained-job count into a declared associative array without I/O |
+| `zcurl session jobs NAME --result ARRAY [--state STATE]` | Copy this session's retained request names into an indexed array without I/O |
 | `zcurl session drop NAME` | Close the pool and release the name |
 | `zcurl --session NAME [options] URL` | Execute a synchronous request in the existing named session |
 | `zcurl http submit HANDLE --session NAME [options] URL` | Submit a job to the session's concurrent pool |
@@ -47,7 +48,7 @@ caller file descriptors; requests never create sessions implicitly or fall back
 to the default pool.
 
 All management commands preserve the complete last transfer result,
-including on failure. `info` requires `--result`; the other management commands
+including on failure. `info` and `jobs` require `--result`; the other management commands
 use only their exit status and do not accept a result destination.
 Requests keep the ordinary 13-field synchronous or 16-field concurrent snapshot
 shape and accept the existing HTTP options, including proxy controls, compression and file I/O.
@@ -144,6 +145,52 @@ non-ASCII identifiers are rejected, using the ordinary HTTP result rules.
 Inspection still works when session discovery is disabled. The owning-shell and
 reentry guards apply, so an inherited child cannot inspect the parent's session.
 
+## Finding and cleaning up a session's jobs
+
+`session jobs` copies request names into a declared ordinary indexed array:
+
+```zsh
+typeset -a requests
+zcurl session jobs inventory --result requests
+for request in "${requests[@]}"; do
+    zcurl http drop "$request"
+done
+zcurl session drop inventory
+```
+
+Names are returned in submission order within the named session. The default
+selection includes all retained jobs and agrees with `info`'s `retained_jobs`
+count when the registry has not changed. An empty selection replaces the target
+with an empty array. Jobs in other sessions, the unnamed pool and WebSocket
+handles are excluded. The example releases only the selected session's jobs.
+
+Use optional `--state all|pending|done|cancelled` to narrow the selection.
+`done` includes successful and failed transfers, but excludes explicitly
+cancelled jobs. `pending` reflects the recorded state: inspection does not
+process deadlines, so an overdue job stays pending until a driver call expires
+it. Result and state options may appear in either order, at most once each.
+`-r` is an alias for `--result`. No filter means `all`.
+
+```zsh
+zcurl session jobs inventory --state done --result requests
+if (( ${#requests} )); then
+    zcurl http wait-any "${requests[@]}"
+fi
+```
+
+The command performs no network I/O, does not collect anything, and preserves
+all last-transfer globals even on error. Snapshots own their name strings and
+survive later collection, drop, reset and unload. They do not keep jobs alive;
+names can become stale or be reused. Refresh the selection after consuming
+results, and track accepted names when callers share a session.
+
+Unknown sessions, invalid states/options and invalid destinations return 2
+without changing the destination or transfer results. Destinations must be
+declared writable ordinary indexed arrays, without unique or converting
+attributes; associative, readonly, special, tied and subscript targets are
+rejected. Dynamic scope and owner/reentry guards match the other session
+commands. Listing works even when the discovery-array features are disabled.
+
 ## What a session retains
 
 Each session owns a synchronous easy/multi pair and a separate concurrent multi
@@ -190,3 +237,8 @@ Inspection tests cover configured and restored defaults, the complete retained-j
 lifecycle, independent snapshots, dynamic scope and strict destination validation.
 Origin connection and request counts check absence of I/O and preserved reuse;
 previous transfer errors and pending-job snapshots remain unchanged.
+
+Session job-list tests cover state filters, HTTP failure versus cancellation,
+submission order, foreign/default-session exclusion, selected waits, scoped
+cleanup, snapshot lifetime, caller options, inherited shells and feature toggles.
+Origin request counters verify that discovery and validation do not drive jobs.

@@ -1,4 +1,4 @@
-# Concurrent HTTP (0.20.0-dev)
+# Concurrent HTTP (0.21.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
@@ -46,6 +46,10 @@ be reused; discard old references before doing so.
 The read-only `zcurl_http_handles` array lists all retained request names in
 submission order without driving I/O or changing results. Completed and
 cancelled names remain until released; see [handle discovery](handles.md).
+`session jobs NAME --result ARRAY [--state STATE]` produces an indexed selection
+for one named session without I/O or transfer-result changes. Nonempty selections
+can be passed directly to `wait-any`; refresh them after collecting or dropping
+jobs. The default includes all retained states, while `done` excludes cancellation.
 
 Every operation accepts `-r`/`--result ARRAY`. The ordinary writable associative
 array rules and dynamic scope are the same as synchronous HTTP. Place this
