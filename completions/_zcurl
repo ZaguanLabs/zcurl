@@ -1,10 +1,10 @@
 #compdef zcurl
 
-# Completion only describes arguments. Never invoke the builtin: even an info
-# call would replace the caller's last transfer result.
+# Read discovery arrays only; even an info call to the builtin would replace
+# the caller's last transfer result.
 local curcontext="$curcontext" context state state_descr line
 local -A opt_args
-local -a specs operations allowed expl
+local -a specs operations allowed expl handles
 local -a invalid_names=( '[^A-Za-z_]*' '*[^A-Za-z_0-9]*' )
 local mode=http operation=request
 
@@ -48,6 +48,17 @@ if (( CURRENT > 2 )); then
         compset -n 2
         if [[ $mode != http || $operation != poll ]]; then
           if (( CURRENT == 2 )); then
+            if [[ $mode == http && $operation != submit &&
+                  ${parameters[zcurl_http_handles]-} == *array*readonly*special* ]]; then
+              handles=( "${zcurl_http_handles[@]}" )
+            elif [[ $mode == ws && $operation != open &&
+                    ${parameters[zcurl_ws_handles]-} == *array*readonly*special* ]]; then
+              handles=( "${zcurl_ws_handles[@]}" )
+            fi
+            if (( $#handles )); then
+              _wanted handles expl "$mode handle" compadd -a handles
+              return
+            fi
             _message 'handle (ASCII identifier, at most 64 characters)'
             return 1
           fi

@@ -24,6 +24,8 @@ def test(env, plain, temp):
         module_path=( "$ZCURL_MODULE_PATH" $module_path )
         zmodload zcurl
         typeset -A zc_hash_valid
+        zcurl http submit http_live -- "$ZCURL_TEST_HTTP/tiny" || return
+        zcurl ws open ws_live -- "${ZCURL_TEST_HTTP/http:/ws:}/ws" || return
         zcurl -r zc_hash_valid -- "$ZCURL_TEST_HTTP/tiny" || return
         typeset -Ar zc_hash_locked=(keep value)
         typeset -a zc_array_valid
@@ -102,6 +104,14 @@ def test(env, plain, temp):
         complete('zcurl -- --out', 'zcurl -- --out')
         complete('zcurl http submit job --data-f', 'zcurl http submit job --data-fd ')
         complete('zcurl http submit --ti', 'zcurl http submit --ti')
+        for operation in ('wait', 'collect', 'cancel', 'drop', 'info'):
+            complete(f'zcurl http {operation} http_l', f'zcurl http {operation} http_live ')
+        for operation in ('send', 'recv', 'poll', 'close', 'drop', 'info'):
+            complete(f'zcurl ws {operation} ws_l', f'zcurl ws {operation} ws_live ')
+        complete('zcurl http submit http_l', 'zcurl http submit http_l')
+        complete('zcurl ws open ws_l', 'zcurl ws open ws_l')
+        complete('zcurl http info ws_l', 'zcurl http info ws_l')
+        complete('zcurl ws info http_l', 'zcurl ws info http_l')
         complete('zcurl http wait job --ti', 'zcurl http wait job --timeout ')
         complete('zcurl http collect job --ti', 'zcurl http collect job --ti')
         complete('zcurl http poll --ti', 'zcurl http poll --timeout ')
@@ -138,10 +148,25 @@ def test(env, plain, temp):
         wait_for(b'MATCHER_READY\r\n')
         complete('zcurl -X pat', 'zcurl -X PATCH ')
         output.clear()
+        os.write(fd, b'zmodload -F zcurl -p:zcurl_http_handles; print -r -- DISABLED_READY\n')
+        wait_for(b'DISABLED_READY\r\n')
+        complete('zcurl http info http_l', 'zcurl http info http_l')
+        output.clear()
+        os.write(fd, b'zmodload -F zcurl +p:zcurl_http_handles; print -r -- ENABLED_READY\n')
+        wait_for(b'ENABLED_READY\r\n')
+        complete('zcurl http info http_l', 'zcurl http info http_live ')
+        output.clear()
+        os.write(fd, b'zc_test_check_results=0; builtin zcurl http drop http_live; builtin zcurl ws drop ws_live; print -r -- DROPPED_READY\n')
+        wait_for(b'DROPPED_READY\r\n')
+        complete('zcurl http info http_l', 'zcurl http info http_l')
+        complete('zcurl ws info ws_l', 'zcurl ws info ws_l')
+        output.clear()
         os.write(fd, b'zc_test_check_results=0; zmodload -u zcurl; unfunction zcurl; print -r -- UNLOADED_READY\n')
         wait_for(b'UNLOADED_READY\r\n')
         complete('zcurl ws send channel --type b', 'zcurl ws send channel --type binary ')
-        assert plain.request_count == before + 1, 'completion caused HTTP I/O'
+        complete('zcurl http info http_l', 'zcurl http info http_l')
+        complete('zcurl ws info ws_l', 'zcurl ws info ws_l')
+        assert plain.request_count == before + 2, 'completion caused HTTP I/O'
         print(f'PASS: {count} real ZLE completions, operation grammar, quoting, array types and unchanged HTTP state')
     finally:
         try:

@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.8.1-dev** is intended for trying in a project: methods, request
+Version **0.9.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -258,6 +258,21 @@ For ordinary HTTP requests, only HTTP/HTTPS are permitted; a URL without a
 scheme defaults to HTTPS.
 Redirects are returned to the caller and are not followed. There is no
 insecure TLS option.
+
+## Handle discovery
+
+`zcurl_http_handles` and `zcurl_ws_handles` are read-only indexed arrays of
+retained names in creation order. They include terminal records until collection
+or drop releases them. Reading either array preserves transfer results and does
+not drive network I/O. For example, copy the current HTTP names directly:
+
+```zsh
+typeset -a requests=( "${zcurl_http_handles[@]}" )
+```
+
+Completion uses these arrays for operations on existing handles. Reset empties
+them; unload removes them. Inherited child shells see empty arrays because
+handles belong to the parent. See [the discovery contract](docs/handles.md).
 
 ## Results and errors
 

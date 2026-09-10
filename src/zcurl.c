@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.8.1-dev"
+#define ZCURL_VERSION "0.9.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -889,12 +889,72 @@ finished:
     return result;
 }
 
+/* Heap copies survive later drops and unloads. Keep the busy guard through
+ * signal delivery so a deferred trap cannot unload an active getter.
+ * Reading these parameters never drives transfers, even past a deadline. */
+static char **
+http_handles_get(UNUSED(Param pm))
+{
+    struct http_job *job;
+    size_t count = 0, i = 0;
+    char **names;
+    int was_busy = busy;
+    queue_signals();
+    busy = 1;
+    if (getpid() == owner)
+        for (job = http_jobs; job; job = job->next)
+            ++count;
+    names = (char **)zhalloc((count + 1) * sizeof(*names));
+    if (count)
+        for (job = http_jobs; job; job = job->next)
+            names[i++] = dupstring(job->name);
+    names[count] = NULL;
+    unqueue_signals();
+    busy = was_busy;
+    return names;
+}
+
+static char **
+ws_handles_get(UNUSED(Param pm))
+{
+    struct websocket *ws;
+    size_t count = 0, i;
+    char **names;
+    int was_busy = busy;
+    queue_signals();
+    busy = 1;
+    if (getpid() == owner)
+        for (ws = websockets; ws; ws = ws->next)
+            ++count;
+    names = (char **)zhalloc((count + 1) * sizeof(*names));
+    names[count] = NULL;
+    /* WebSockets are prepended; expose creation order like HTTP jobs. */
+    i = count;
+    if (count)
+        for (ws = websockets; ws; ws = ws->next)
+            names[--i] = dupstring(ws->name);
+    unqueue_signals();
+    busy = was_busy;
+    return names;
+}
+
+static const struct gsu_array http_handles_gsu = {
+    http_handles_get, NULL, stdunsetfn
+};
+static const struct gsu_array ws_handles_gsu = {
+    ws_handles_get, NULL, stdunsetfn
+};
+static const struct paramdef handle_parameters[] = {
+    SPECIALPMDEF("zcurl_http_handles", PM_ARRAY | PM_READONLY, &http_handles_gsu, NULL, NULL),
+    SPECIALPMDEF("zcurl_ws_handles", PM_ARRAY | PM_READONLY, &ws_handles_gsu, NULL, NULL),
+};
+
 static struct builtin builtins[] = {
     BUILTIN("zcurl", BINF_HANDLES_OPTS, bin_zcurl, 0, -1, 0, NULL, NULL),
 };
 
-/* Initialized from result_fields by setup_; names must live until finish_. */
-static struct paramdef parameters[ARRAY_SIZE(result_fields)];
+/* Initialized by setup_; names must live until finish_. */
+static struct paramdef parameters[ARRAY_SIZE(result_fields) + ARRAY_SIZE(handle_parameters)];
 static struct features module_features = {
     builtins, ARRAY_SIZE(builtins), NULL, 0, NULL, 0,
     parameters, ARRAY_SIZE(parameters), 0
@@ -918,6 +978,11 @@ int setup_(UNUSED(Module m))
         p->name = ztrdup(dyncat("zcurl_", f->key));
         p->flags = (f->integer ? PM_INTEGER : PM_SCALAR) | PM_READONLY;
         p->var = f->value;
+    }
+    for (i = 0; i < ARRAY_SIZE(handle_parameters); ++i) {
+        struct paramdef *p = &parameters[ARRAY_SIZE(result_fields) + i];
+        *p = handle_parameters[i];
+        p->name = ztrdup(p->name);
     }
     clear_result();
     return 0;
@@ -964,6 +1029,8 @@ int finish_(UNUSED(Module m))
             zsfree(*value);
             *value = NULL;
         }
+    }
+    for (i = 0; i < ARRAY_SIZE(parameters); ++i) {
         zsfree(parameters[i].name);
         memset(&parameters[i], 0, sizeof(parameters[i]));
     }

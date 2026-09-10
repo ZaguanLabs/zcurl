@@ -1,4 +1,4 @@
-# Validation of 0.8.1-dev
+# Validation of 0.9.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -63,13 +63,26 @@ every resolver, signal trap, job-control combination, or backend behavior.
 These checks cover connection sockets and retained file duplicates, not every
 descriptor opened internally by libcurl backends. See [the scope](descriptors.md).
 
+## Handle-discovery coverage
+
+- Empty arrays, creation order, separate namespaces, duplicate rejection,
+  cancellation/completion/closure retention, collection/drop, and name reuse.
+- Unchanged result fields and no server-observed I/O from reads; an expired
+  submission stays pending until explicitly driven.
+- Readonly enforcement, inherited child arrays empty while parent arrays remain
+  intact, and indexing under `KSH_ARRAYS`.
+- Feature disable/enable preserving handles, reset emptying arrays, and three
+  unload/reload cycles with copied arrays surviving teardown.
+
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 51 resulting command buffers, including:
+completion widget. The test checks 72 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
+- Live names for every existing-handle operation, namespace separation, no
+  suggestions for new names, and updates after drop and feature toggling.
 - Methods, frame types, body/HEAD exclusions, repeated headers, options after
   a URL, end-of-options handling, and unsupported attached argument forms.
 - Associative versus indexed result arrays; filtering readonly, converting,

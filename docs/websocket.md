@@ -25,6 +25,10 @@ exist simultaneously. Opening an existing name fails without replacing it.
 Failed opens allocate no handle. `drop` releases a name so it can be reused;
 callers must discard their old references when they drop it.
 
+The read-only `zcurl_ws_handles` array lists retained names in successful open
+order, including closed/error records, without driving I/O or changing results.
+See [handle discovery](handles.md).
+
 Every operation accepts `-r`/`--result ARRAY`, with the same declared ordinary
 associative-array requirements and dynamic scope as HTTP. Put it first after
 HANDLE to capture subsequent option-validation failures. Results are also

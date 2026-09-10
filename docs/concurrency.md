@@ -42,6 +42,10 @@ a separate namespace from WebSocket handles. Duplicate submissions fail
 without replacing the original request. After collection or drop, a name can
 be reused; discard old references before doing so.
 
+The read-only `zcurl_http_handles` array lists all retained request names in
+submission order without driving I/O or changing results. Completed and
+cancelled names remain until released; see [handle discovery](handles.md).
+
 Every operation accepts `-r`/`--result ARRAY`. The ordinary writable associative
 array rules and dynamic scope are the same as synchronous HTTP. Place this
 option first after the operation/handle to capture subsequent validation

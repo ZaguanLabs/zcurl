@@ -1,4 +1,4 @@
-# Native Zsh completion (0.8.0-dev)
+# Native Zsh completion (0.9.0-dev)
 
 `completions/_zcurl` provides optional compsys completion for the module's CLI.
 It describes arguments without invoking `zcurl`, opening connections, driving
@@ -38,6 +38,10 @@ your startup configuration.
 - Top-level `http`, `ws`, `headers`, control flags and synchronous HTTP options.
 - Operation-specific HTTP and WebSocket options. Handle arguments come before
   options, matching the module's grammar; `http poll` takes no handle.
+- Existing handles from the native read-only discovery arrays, with separate
+  HTTP and WebSocket namespaces. These include terminal records until released.
+  New-name positions stay free text. Discovery is optional; completion still
+  works when the module or either array feature is absent.
 - Standard HTTP methods and WebSocket frame types. With `--head`, method
   suggestions are limited to HEAD; a request body excludes HEAD suggestions.
 - Mutual exclusions among `--head`, literal bodies and file uploads. Repeated
@@ -57,9 +61,9 @@ Completion uses the user's matcher, menu, grouping and quoting behavior.
 Mid-word insertion follows Zsh's `COMPLETE_IN_WORD` option. Ordinary aliases
 such as `alias zc='noglob zcurl'` are supported by compsys.
 
-Numeric limits, payloads, raw header transcripts, handles and descriptor numbers
-have argument descriptions rather than generated values. Completion does not
-enumerate live module handles or private descriptors. URL completion offers
+Numeric limits, payloads, raw header transcripts, new handles and descriptor
+numbers have argument descriptions rather than generated values. Completion
+does not enumerate private descriptors. URL completion offers
 scheme prefixes, without generating hosts or paths. Unlisted custom HTTP
 methods and header names remain valid when accepted by the builtin; completion
 is guidance, while the native parser remains authoritative.
@@ -70,8 +74,9 @@ is guidance, while the native parser remains authoritative.
 Zsh PTY with real `compinit` and ZLE completion. It checks inserted command
 buffers for operation-specific flags, method/frame types, option exclusions,
 result-array filtering, aliases, case-insensitive matcher styles, `--`,
-mid-word insertion and filename escaping. The test also completes after module
-unload. A command-call guard and server request count check that completion
+mid-word insertion and filename escaping. It checks live handles, namespace
+separation, drop, discovery-feature toggling, and completion after module unload.
+A command-call guard and server request count check that completion
 does not invoke `zcurl` or perform HTTP I/O; transfer results remain intact.
 
 These PTY checks use installed Zsh 5.9.2. Framework-specific startup ordering,

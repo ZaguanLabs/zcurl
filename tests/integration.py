@@ -528,6 +528,9 @@ if __name__ == "__main__":
         api_test(env, plain, temp)
         loader_test(env)
         completion.test(env, plain, temp)
+        before = plain.request_count
+        print(run(env, (ROOT / 'tests' / 'handles.zsh').read_text()))
+        assert plain.request_count == before + 4, 'handle discovery caused unexpected HTTP I/O'
         streaming_test(env, plain, temp)
         upload_test(env, plain, temp)
         print(run(env, (ROOT / 'tests' / 'descriptors.zsh').read_text()))
