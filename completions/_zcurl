@@ -97,6 +97,8 @@ elif [[ $mode == session ]]; then
     '(--defaults)--max-body[default response size limit]:bytes (1..67108864):'
     '(--defaults -c --cacert)'{-c,--cacert}'[default origin trust file; empty clears]:CA file:_files'
     '(--defaults)--proxy-cacert[default HTTPS proxy trust file; empty clears]:proxy CA file:_files'
+    '(--defaults -x --proxy)'{-x,--proxy}'[default proxy; empty disables]:proxy URL:->proxy-url'
+    '(--defaults)--noproxy[default bypass list; empty bypasses none]:comma-separated hosts (or *):'
     '(- *)--defaults[restore standard request defaults]'
   )
 elif [[ $mode == headers ]]; then

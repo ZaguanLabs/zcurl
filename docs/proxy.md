@@ -1,4 +1,4 @@
-# HTTP and WebSocket proxy routing (0.14.0-dev)
+# HTTP and WebSocket proxy routing (0.24.0-dev)
 
 Synchronous HTTP, `zcurl http submit` and `zcurl ws open` accept routing controls:
 
@@ -21,7 +21,7 @@ zcurl --proxy '' -r response -- https://api.example.com/items
 The two options are independent. Setting `--proxy` alone still respects the
 environment's bypass list. Setting `--noproxy` alone uses the environment's
 proxy choice. Neither option changes any shell environment variable. Omitted
-options retain libcurl's environment behavior; specify both when a concurrent
+options use named-session defaults when configured, otherwise libcurl's environment behavior; specify both when a concurrent
 request needs a fixed routing policy independent of later environment changes.
 
 Values are separate literal shell words, including empty strings. Duplicate
@@ -145,3 +145,10 @@ Named sessions can configure `--proxy-cacert FILE` independently of the origin
 `--cacert FILE` default. Explicit request values override either default.
 Clearing a session's path changes future requests; already submitted jobs keep
 their captured paths. See [session CA defaults](sessions.md#ca-file-defaults).
+
+Named HTTP sessions also accept `configure NAME --proxy URL --noproxy HOSTS`.
+Per-request values take precedence, and `create NAME --from SOURCE` copies the
+configured route. Empty values preserve their explicit routing meaning;
+`configure --defaults` removes both routing overrides along with the other
+configured defaults. Session metadata includes routing values and flags that
+distinguish unset from explicit empty. See [session routing](sessions.md#proxy-and-bypass-defaults).

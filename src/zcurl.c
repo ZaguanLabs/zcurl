@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.23.0-dev"
+#define ZCURL_VERSION "0.24.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -26,7 +26,7 @@ struct http_session {
     CURLM *http_multi;
     size_t http_jobs;
     long timeout, connect_timeout, max_body;
-    char *ca, *proxy_ca;
+    char *ca, *proxy_ca, *proxy, *noproxy;
 };
 static struct http_session default_session, *named_sessions;
 static pid_t owner;
@@ -876,14 +876,14 @@ help(void)
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"
-         "  Named sessions may supply timeout, size and CA-file defaults.\n"
+         "  Named sessions may supply timeout, size, CA-file and routing defaults.\n"
          "zcurl --reset               Close HTTP/WS sessions and clear results\n"
          "zcurl session create NAME [--from SOURCE]\n"
          "  Create independent pools, optionally copying a named session's defaults.\n"
          "zcurl session reset|drop NAME\n"
          "  Manage named HTTP pools; preserves transfer results.\n"
          "zcurl session configure NAME [-t MS] [--connect-timeout MS] [--max-body BYTES]\n"
-         "                             [-c FILE] [--proxy-cacert FILE]\n"
+         "                             [-c FILE] [--proxy-cacert FILE] [-x URL] [--noproxy HOSTS]\n"
          "zcurl session configure NAME --defaults\n"
          "  Set request defaults or restore standard values; retained jobs are unchanged.\n"
          "zcurl session jobs NAME --result ARRAY [--state all|pending|done|cancelled]\n"

@@ -128,7 +128,7 @@ expect_code 2 zcurl session configure alpha
 expect_code 2 zcurl session configure absent --defaults
 expect_code 2 zcurl session configure alpha --defaults --defaults
 expect_code 2 zcurl session configure alpha --max-body 1 --defaults
-expect_code 2 zcurl session configure alpha --proxy ''
+expect_code 2 zcurl session configure alpha --header 'X-Test: unsupported'
 expect_code 2 zcurl session configure alpha --result response
 expect_code 2 zcurl session configure alpha --timeout=10
 zcurl session configure alpha --timeout 1 --connect-timeout 1 --max-body 1

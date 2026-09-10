@@ -1,21 +1,23 @@
 /* Included by zcurl.c. Each session owns separate synchronous and concurrent
  * pools. Retained jobs pin the session until collection or drop. */
 #define HTTP_SESSIONS 16
-#define SESSION_CA_LIMIT 4096
+#define SESSION_TEXT_LIMIT 4096
 static int session_jobs(struct http_session *s, char **args);
 
 static void
-session_clear_trust(struct http_session *s)
+session_clear_strings(struct http_session *s)
 {
     free(s->ca);
     free(s->proxy_ca);
-    s->ca = s->proxy_ca = NULL;
+    free(s->proxy);
+    free(s->noproxy);
+    s->ca = s->proxy_ca = s->proxy = s->noproxy = NULL;
 }
 
 static void
 session_standard_defaults(struct http_session *s)
 {
-    session_clear_trust(s);
+    session_clear_strings(s);
     s->timeout = 10000;
     s->connect_timeout = 3000;
     s->max_body = BODY_LIMIT;
@@ -31,7 +33,7 @@ find_session(const char *name)
 }
 
 /* Apply defaults only after parsing every request option, so --session order
- * cannot change explicit overrides. Submission snapshots these numeric values. */
+ * cannot change explicit overrides. Submission captures the effective values. */
 static int
 session_request_defaults(struct request *r, unsigned seen)
 {
@@ -47,6 +49,8 @@ session_request_defaults(struct request *r, unsigned seen)
     if (!(seen & (1u << MAX_BODY))) r->max_body = s->max_body;
     if (!(seen & (1u << CA))) r->ca = s->ca;
     if (!(seen & (1u << PROXY_CA))) r->proxy_ca = s->proxy_ca;
+    if (!(seen & (1u << PROXY))) r->proxy = s->proxy;
+    if (!(seen & (1u << NOPROXY))) r->noproxy = s->noproxy;
     return 1;
 }
 
@@ -56,8 +60,8 @@ static int
 session_configure(struct http_session *s, char **args)
 {
     long timeout = s->timeout, connect_timeout = s->connect_timeout, max_body = s->max_body;
-    char *ca = NULL, *proxy_ca = NULL;
-    const char *message = "configure requires timeout/connect-timeout (1..600000 ms), max-body (1..67108864 bytes), cacert/proxy-cacert (at most 4096 bytes), or --defaults alone";
+    char *ca = NULL, *proxy_ca = NULL, *proxy = NULL, *noproxy = NULL;
+    const char *message = "configure requires timeout/connect-timeout (1..600000 ms), max-body (1..67108864 bytes), cacert/proxy-cacert/proxy/noproxy (at most 4096 bytes each), or --defaults alone";
     int status = 2;
     unsigned seen = 0;
     if (!*args) goto usage;
@@ -80,17 +84,22 @@ session_configure(struct http_session *s, char **args)
             bit = 8;
         } else if (!strcmp(option, "--proxy-cacert")) {
             bit = 16;
+        } else if (!strcmp(option, "--proxy") || !strcmp(option, "-x")) {
+            bit = 32;
+        } else if (!strcmp(option, "--noproxy")) {
+            bit = 64;
         } else goto usage;
         if ((seen & bit) || !*args || !(value = text_argument(*args++))) goto usage;
         seen |= bit;
         if (target) {
             if (!decimal(value, 1, maximum, target)) goto usage;
         } else {
-            char **path = bit == 8 ? &ca : &proxy_ca;
-            if (strlen(value) > SESSION_CA_LIMIT) goto usage;
-            if (*value && !(*path = strdup(value))) {
+            char **text = bit == 8 ? &ca : bit == 16 ? &proxy_ca : bit == 32 ? &proxy : &noproxy;
+            if (strlen(value) > SESSION_TEXT_LIMIT) goto usage;
+            /* Empty routing values are explicit overrides; empty CA paths clear. */
+            if ((*value || bit >= 32) && !(*text = strdup(value))) {
                 status = 27;
-                message = "could not copy session CA path";
+                message = "could not copy session default";
                 goto usage;
             }
         }
@@ -100,10 +109,14 @@ session_configure(struct http_session *s, char **args)
     s->max_body = max_body;
     if (seen & 8) { free(s->ca); s->ca = ca; }
     if (seen & 16) { free(s->proxy_ca); s->proxy_ca = proxy_ca; }
+    if (seen & 32) { free(s->proxy); s->proxy = proxy; }
+    if (seen & 64) { free(s->noproxy); s->noproxy = noproxy; }
     return 0;
 usage:
     free(ca);
     free(proxy_ca);
+    free(proxy);
+    free(noproxy);
     zwarnnam("zcurl session", "%s", message);
     return status;
 }
@@ -115,7 +128,7 @@ sessions_cleanup(void)
     while ((s = named_sessions)) {
         named_sessions = s->next;
         close_session(s);
-        session_clear_trust(s);
+        session_clear_strings(s);
         free(s->name);
         free(s);
     }
@@ -127,9 +140,10 @@ sessions_cleanup(void)
 static int
 session_info(struct http_session *s, char **args)
 {
-    const char *keys[] = {"name", "timeout", "connect_timeout", "max_body", "retained_jobs", "cacert", "proxy_cacert"};
+    const char *keys[] = {"name", "timeout", "connect_timeout", "max_body", "retained_jobs", "cacert", "proxy_cacert", "proxy", "noproxy", "proxy_set", "noproxy_set"};
     uintmax_t numbers[] = {(uintmax_t)s->timeout, (uintmax_t)s->connect_timeout,
                           (uintmax_t)s->max_body, (uintmax_t)s->http_jobs};
+    char *strings[] = {s->ca, s->proxy_ca, s->proxy, s->noproxy};
     char *option, *target, **values;
     size_t i;
     if (!args[0] || !args[1] || args[2] || !(option = text_argument(args[0])) ||
@@ -146,10 +160,10 @@ session_info(struct http_session *s, char **args)
         else if (i <= ARRAY_SIZE(numbers)) {
             snprintf(number, sizeof(number), "%ju", numbers[i - 1]);
             values[2 * i + 1] = ztrdup(number);
-        } else {
-            char *path = i == 5 ? s->ca : s->proxy_ca;
-            values[2 * i + 1] = metafy(path ? path : "", path ? (int)strlen(path) : 0, META_DUP);
-        }
+        } else if (i < 5 + ARRAY_SIZE(strings)) {
+            char *value = strings[i - 5];
+            values[2 * i + 1] = metafy(value ? value : "", value ? (int)strlen(value) : 0, META_DUP);
+        } else values[2 * i + 1] = ztrdup((i == 9 ? s->proxy : s->noproxy) ? "1" : "0");
     }
     values[2 * i] = NULL;
     if (!sethparam(target, values)) {
@@ -203,8 +217,10 @@ sessions_command(char **args)
          * on failure. The source may have retained jobs. */
         if (!s || !(s->name = strdup(name)) ||
             (source && source->ca && !(s->ca = strdup(source->ca))) ||
-            (source && source->proxy_ca && !(s->proxy_ca = strdup(source->proxy_ca)))) {
-            if (s) { session_clear_trust(s); free(s->name); }
+            (source && source->proxy_ca && !(s->proxy_ca = strdup(source->proxy_ca))) ||
+            (source && source->proxy && !(s->proxy = strdup(source->proxy))) ||
+            (source && source->noproxy && !(s->noproxy = strdup(source->noproxy)))) {
+            if (s) { session_clear_strings(s); free(s->name); }
             free(s);
             status = 27;
             message = "could not allocate HTTP session";
@@ -225,7 +241,7 @@ sessions_command(char **args)
     }
     close_session(s);
     if (!strcmp(operation, "drop")) {
-        session_clear_trust(s);
+        session_clear_strings(s);
         *link = s->next;
         free(s->name);
         free(s);

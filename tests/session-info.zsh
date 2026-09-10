@@ -13,7 +13,7 @@ typeset -A info=(stale gone) copied response saved
 zcurl session create alpha
 zcurl session create beta
 zcurl session info alpha --result info
-check ${#info} 7
+check ${#info} 11
 check $info[name] alpha
 check $info[timeout] 10000
 check $info[connect_timeout] 3000
@@ -119,7 +119,7 @@ for key in ${(k)saved}; do check "$info[$key]" "$saved[$key]"; done
     setopt ksharrays shwordsplit globsubst
     local -A info=(old gone)
     zcurl session info beta -r info
-    [[ ${info[name]} == beta && ${#info[@]} == 7 ]] || exit 1
+    [[ ${info[name]} == beta && ${#info[@]} == 11 ]] || exit 1
 }
 check $info[name] alpha
 zmodload -F zcurl -p:zcurl_http_sessions

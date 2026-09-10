@@ -1,4 +1,4 @@
-# Native Zsh completion (0.23.0-dev)
+# Native Zsh completion (0.24.0-dev)
 
 `completions/_zcurl` provides optional compsys completion for the module's CLI.
 It describes arguments without invoking `zcurl`, opening connections, driving
@@ -43,7 +43,8 @@ your startup configuration.
   Existing names come from `zcurl_http_sessions`; create positions remain free
   text; `create NAME --from` completes existing source names. Missing discovery
   features fall back to a name description. Configure
-  offers numeric settings, CA-file paths and the mutually exclusive `--defaults`.
+  offers numeric settings, CA-file paths, proxy/bypass defaults and the mutually
+  exclusive `--defaults`. Proxy values complete scheme prefixes.
   Info offers its required result option and ordinary associative destinations.
   Jobs offers ordinary indexed destinations and the four supported state filters.
 - Existing handles from the native read-only discovery arrays, with separate

@@ -15,7 +15,7 @@ cp -- "$ZCURL_TEST_CA" "$trust"
 zcurl session create alpha
 zcurl session create beta
 zcurl session info alpha -r info
-check ${#info} 7
+check ${#info} 11
 check "$info[cacert]" ''
 check "$info[proxy_cacert]" ''
 expect_code 60 zcurl --session alpha "$ZCURL_TEST_HTTPS/tiny"
