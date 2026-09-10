@@ -164,7 +164,7 @@ session_info(struct http_session *s, char **args)
 static int
 sessions_command(char **args)
 {
-    struct http_session *s, **link;
+    struct http_session *s, *source = NULL, **link;
     char *operation, *name;
     size_t count = 0;
     const char *message = "use zcurl session create|reset|drop|configure|info|jobs NAME (ASCII identifier, at most 64 characters)";
@@ -177,7 +177,17 @@ sessions_command(char **args)
         if (!strcmp(operation, "jobs")) return session_jobs(s, args + 2);
         return !strcmp(operation, "info") ? session_info(s, args + 2) : session_configure(s, args + 2);
     }
-    if (args[2]) goto error;
+    if (!strcmp(operation, "create") && args[2]) {
+        char *option = text_argument(args[2]), *source_name;
+        if (!option || strcmp(option, "--from") || !args[3] || args[4] ||
+            !(source_name = text_argument(args[3])) || !identifier(source_name) ||
+            strlen(source_name) > 64) {
+            message = "create accepts NAME [--from SOURCE] (existing named session)";
+            goto error;
+        }
+        source = find_session(source_name);
+        if (!source) { message = "unknown source HTTP session"; goto error; }
+    } else if (args[2]) goto error;
     if (strcmp(operation, "create") && strcmp(operation, "reset") && strcmp(operation, "drop")) goto error;
     for (link = &named_sessions; *link; link = &(*link)->next) {
         count++;
@@ -188,14 +198,24 @@ sessions_command(char **args)
         if (s) { message = "HTTP session already exists"; goto error; }
         if (count >= HTTP_SESSIONS) { message = "at most 16 named HTTP sessions may exist"; goto error; }
         s = calloc(1, sizeof(*s));
-        if (!s || !(s->name = strdup(name))) {
+        /* Copy configuration only: pools, jobs and registry links stay empty.
+         * Publish after every allocation succeeds, leaving both sessions intact
+         * on failure. The source may have retained jobs. */
+        if (!s || !(s->name = strdup(name)) ||
+            (source && source->ca && !(s->ca = strdup(source->ca))) ||
+            (source && source->proxy_ca && !(s->proxy_ca = strdup(source->proxy_ca)))) {
+            if (s) { session_clear_trust(s); free(s->name); }
             free(s);
             status = 27;
             message = "could not allocate HTTP session";
             goto error;
         }
+        if (source) {
+            s->timeout = source->timeout;
+            s->connect_timeout = source->connect_timeout;
+            s->max_body = source->max_body;
+        } else session_standard_defaults(s);
         *link = s;
-        session_standard_defaults(s);
         return 0;
     }
     if (!s) { message = "unknown HTTP session"; goto error; }

@@ -76,12 +76,14 @@ if (( CURRENT > 2 )); then
         fi
       fi
       curcontext="${curcontext%:*}:$mode-$operation"
-      [[ $mode == session && $operation != (configure|info|jobs) ]] && return 1
+      [[ $mode == session && $operation != (create|configure|info|jobs) ]] && return 1
       ;;
   esac
 fi
 
-if [[ $mode == session && $operation == jobs ]]; then
+if [[ $mode == session && $operation == create ]]; then
+  specs=( '--from[copy defaults from an existing session]:HTTP session:->http-sessions' )
+elif [[ $mode == session && $operation == jobs ]]; then
   specs=(
     '(-r --result)'{-r,--result}'[store session request names]:indexed array:->arrays'
     '--state[filter retained request state]:state:(all pending done cancelled)'

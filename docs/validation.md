@@ -1,4 +1,4 @@
-# Validation of 0.22.0-dev
+# Validation of 0.23.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -144,6 +144,13 @@ mixed numeric/path updates and repeated reset/drop/unload cleanup. The HTTPS
 proxy fixture independently counts CONNECT/forwarded requests. Transfer
 snapshots remain unchanged; session metadata includes both configured CA paths.
 
+Configuration-copy tests cover atomic creation, all five defaults, independent
+CA-path ownership, source reconfiguration/drop, copying with a pending job,
+empty job lists in copies, validation, registry capacity/order and hidden discovery.
+Eight verified HTTPS requests must use exactly four connections across the two
+sessions' synchronous and concurrent pools. Repeated copies and cleanup run
+under the same sanitizers and leak checks as other session operations.
+
 ## HTTP compression coverage
 
 - Gzip and zlib deflate generated independently by the loopback fixture; all
@@ -176,7 +183,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 181 resulting command buffers, including:
+completion widget. The test checks 187 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -379,7 +386,7 @@ third-party libraries themselves are not instrumented by this target.
 ## Memory checks and dependency findings
 
 `make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
-instrumentation. The full suite passes, including all 181 completion cases,
+instrumentation. The full suite passes, including all 187 completion cases,
 loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
 preloaded into test children; leak detection is disabled for this target.
 A deliberately overflowing child whose failure was ignored by its parent still

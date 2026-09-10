@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.22.0-dev** is intended for trying in a project: methods, request
+Version **0.23.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -363,6 +363,11 @@ for ownership, limits and cache scope. Concurrent submissions also accept
 `--session NAME`; polling and waiting advance every concurrent pool. Each session
 keeps separate synchronous and concurrent pools. Reset/drop requires collecting
 or dropping all of that session's retained jobs first.
+
+`zcurl session create NAME --from SOURCE` creates fresh pools using an existing
+named session's current defaults. The new session owns copies of its settings;
+changing or dropping either session leaves the other's configuration intact.
+Connection caches and retained jobs stay with their original session.
 
 `zcurl session configure NAME --timeout MS --connect-timeout MS --max-body BYTES`
 sets defaults for future requests. `--cacert FILE` and `--proxy-cacert FILE` also

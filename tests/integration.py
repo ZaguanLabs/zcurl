@@ -645,6 +645,11 @@ if __name__ == "__main__":
         trust_defaults = run(env, (ROOT / 'tests' / 'session-trust.zsh').read_text())
         assert trust_defaults.startswith('PASS: session CA defaults'), trust_defaults
         print(trust_defaults)
+        copy_before = (tls.connections, tls.request_count)
+        session_copy = run(env, (ROOT / 'tests' / 'session-copy.zsh').read_text())
+        assert session_copy.startswith('PASS: session configuration copies'), session_copy
+        assert (tls.connections - copy_before[0], tls.request_count - copy_before[1]) == (4, 8), 'session copies changed pool isolation or caused unexpected I/O'
+        print(session_copy)
         jobs_before = plain.request_count
         session_jobs = run(env, (ROOT / 'tests' / 'session-jobs.zsh').read_text())
         assert session_jobs.startswith('PASS: session job discovery'), session_jobs

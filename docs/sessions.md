@@ -1,4 +1,4 @@
-# Named HTTP sessions (0.22.0-dev)
+# Named HTTP sessions (0.23.0-dev)
 
 Named sessions give HTTP callers independent libcurl connection pools.
 Create a session explicitly, then select it on each request:
@@ -27,6 +27,7 @@ WebSocket names occupy independent namespaces.
 | Command | Effect |
 | --- | --- |
 | `zcurl session create NAME` | Reserve a new name; libcurl handles are allocated lazily on its first request |
+| `zcurl session create NAME --from SOURCE` | Reserve a new name with owned copies of an existing session's defaults and fresh pools |
 | `zcurl session reset NAME` | Close that session's connections and destroy both its synchronous and concurrent handles, retaining the name, configuration and creation order |
 | `zcurl session configure NAME [options]` | Update defaults for future requests without closing connections |
 | `zcurl session configure NAME --defaults` | Restore standard request defaults without closing connections |
@@ -64,6 +65,36 @@ default pool and other handles. An inherited child sees an empty session array
 and cannot use or manage the parent's sessions. The ordinary owner/reentry guard
 also rejects session management inside a trap during an active transfer.
 Interrupting a named request leaves the session usable for subsequent requests.
+
+## Copying configuration
+
+Create independent sessions from a configured template:
+
+```zsh
+zcurl session create template
+zcurl session configure template --timeout 2000 --max-body 65536 --cacert /path/to/ca.pem
+zcurl session create foreground --from template
+zcurl session create batch --from template
+zcurl session configure batch --timeout 30000
+zcurl session drop template
+```
+
+`--from SOURCE` copies the source's current timeout, connection timeout, response
+limit and both CA-file paths. The source must be an existing named session;
+the unnamed default pool cannot be a source. The destination must be a new name.
+All allocations finish before the destination enters the registry, so failure
+leaves existing sessions and creation order intact. The ordinary 16-session cap
+applies. `--from` is accepted once, after the new name, with a separate source word.
+No other creation options are accepted; use `configure` to customize the copy.
+
+Copying performs no I/O, opens no CA files and preserves transfer results.
+Connections, caches and retained jobs remain with the source. A source with
+pending, completed or cancelled jobs may be copied; the new session starts with
+zero jobs and lazily creates independent synchronous and concurrent pools.
+Changing, resetting or dropping either session does not change the other's
+configuration. CA path strings are copied, but the files they reference remain
+external resources; their contents and relative-path resolution are unchanged.
+`configure --defaults` restores the standard values, not the copied template.
 
 ## Request defaults
 
@@ -284,3 +315,9 @@ hostname checks, request overrides in both orders, copied paths after submission
 Unicode/newline metadata, bounded path storage, atomic validation, reset/clear
 semantics and repeated drop/unload cleanup. Session inspection now has seven
 fields; existing HTTP result shapes remain unchanged.
+
+Configuration-copy tests check all defaults, Unicode/newline CA paths, independent
+synchronous/concurrent TLS pools, copying with retained jobs, source changes and
+drop, capacity/order, invalid syntax, hidden discovery and repeated cleanup.
+Origin counters require exactly four connections for eight requests across the
+source and copy; creation and validation must add no network activity.
