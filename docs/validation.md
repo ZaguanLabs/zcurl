@@ -1,4 +1,4 @@
-# Validation of 0.13.0-dev
+# Validation of 0.14.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -86,7 +86,12 @@ descriptor opened internally by libcurl backends. See [the scope](descriptors.md
 - WebSocket TLS, authentication, refused tunnel and connection failures retain
   no handle; invalid routing options are rejected before I/O.
 
-Only loopback HTTP proxies are covered. See [routing and limitations](proxy.md).
+- HTTPS proxy forwarding and CONNECT with a separate proxy certificate; proxy
+  and origin trust remain independent, including hostname verification.
+- Proxy CA path ownership in concurrent jobs, option reset, binary bodies through
+  nested TLS, authenticated WS/WSS tunnels and proxy CA filename completion.
+
+Loopback HTTP and HTTPS proxies are covered with OpenSSL. See [routing and limitations](proxy.md).
 
 ## HTTP compression coverage
 
@@ -120,7 +125,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 105 resulting command buffers, including:
+completion widget. The test checks 112 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.

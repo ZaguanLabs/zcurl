@@ -1,4 +1,4 @@
-# Persistent WebSockets (0.13.0-dev)
+# Persistent WebSockets (0.14.0-dev)
 
 `zcurl ws` is an experimental, explicitly driven WebSocket client. It uses
 libcurl for the WS/WSS handshake, TLS, masking, and wire framing. The module
@@ -37,7 +37,7 @@ Options take separate words, only headers repeat, and `--` ends options.
 
 | Operation | Options and behavior |
 | --- | --- |
-| `open` | Explicit `ws://` or `wss://` URL; `-x`/`--proxy URL`, `--noproxy HOSTS`, `-c`/`--cacert FILE`, repeated `-H`/`--header FIELD`, `-t`/`--timeout MS` (1..600000, default 10000), `--connect-timeout MS` (1..600000, default 3000), `--max-queue BYTES`, `--max-message BYTES` (each 1..67108864, default 8388608) |
+| `open` | Explicit `ws://` or `wss://` URL; `-x`/`--proxy URL`, `--noproxy HOSTS`, `--proxy-cacert FILE`, `-c`/`--cacert FILE`, repeated `-H`/`--header FIELD`, `-t`/`--timeout MS` (1..600000, default 10000), `--connect-timeout MS` (1..600000, default 3000), `--max-queue BYTES`, `--max-message BYTES` (each 1..67108864, default 8388608) |
 | `send` | Copy one frame into the send queue: `-d`/`--data BYTES` (default empty), `--type text\|binary\|ping\|pong` (default text), `--more` for a nonfinal data fragment. Success means accepted, not delivered. No network I/O. |
 | `recv` | Attempt one nonblocking receive; `--max-chunk BYTES` (1..65536, default 65536). Does not flush the send queue. |
 | `poll` | Drive queued sends and receive at most one event; `-t`/`--timeout MS` (0..1000, default 0), `--max-chunk BYTES` (1..65536, default 65536). |
@@ -52,10 +52,11 @@ there is no cookie engine or credential sharing with HTTP/other WS handles.
 `open` also accepts `-x`/`--proxy URL` and `--noproxy HOSTS`. Empty proxy disables
 proxies; empty bypass list bypasses none, while `'*'` bypasses all. Omitted
 options retain libcurl's proxy environment behavior. Both WS and WSS use CONNECT
-with the tested HTTP proxy; WSS verifies origin TLS inside the tunnel. See
+with the tested HTTP and HTTPS proxies; WSS verifies origin TLS inside the tunnel. See
 [proxy routing](proxy.md#websocket-connections) for authentication and scope.
-These options apply only at open. Subprotocol negotiation policy is the
-caller's responsibility; the raw handshake headers are in the open result.
+`--proxy-cacert FILE` separately supplies trust for an HTTPS proxy, with both
+proxy and origin verification enabled. These options apply only at open.
+Subprotocol negotiation policy is the caller's responsibility; the raw handshake headers are in the open result.
 
 ## Events and results
 

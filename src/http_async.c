@@ -117,6 +117,7 @@ http_submit(const char *name, struct request *r)
                      r->ca ? strlen(r->ca) + 1 : 0,
                      r->proxy ? strlen(r->proxy) + 1 : 0,
                      r->noproxy ? strlen(r->noproxy) + 1 : 0,
+                     r->proxy_ca ? strlen(r->proxy_ca) + 1 : 0,
                      r->method ? strlen(r->method) + 1 : 0};
     size_t i;
     CURLcode rc;

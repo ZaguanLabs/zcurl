@@ -86,6 +86,7 @@ case $mode:$operation in
     specs+=(
       '(-x --proxy)'{-x,--proxy}'[override proxy; empty disables proxies]:proxy URL:->proxy-url'
       '--noproxy[override bypass list; empty bypasses none]:comma-separated hosts (or *):'
+      '--proxy-cacert[PEM trust file for an HTTPS proxy]:proxy CA file:_files'
     )
     ;;
 esac

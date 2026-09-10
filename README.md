@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.13.0-dev** is intended for trying in a project: methods, request
+Version **0.14.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -245,6 +245,7 @@ zcurl --reset
 | `--compressed` | Negotiate supported HTTP content encodings and decode response bytes |
 | `-x`, `--proxy URL` | Override the proxy for this HTTP request; an empty string disables proxies |
 | `--noproxy HOSTS` | Override the comma-separated bypass list; `'*'` bypasses all, `''` bypasses none |
+| `--proxy-cacert FILE` | PEM trust file for an HTTPS proxy, separate from origin `--cacert` |
 | `-c`, `--cacert FILE` | PEM trust file, with hostname verification still enabled |
 | `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
 | `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |

@@ -1,4 +1,4 @@
-# HTTP and WebSocket proxy routing (0.13.0-dev)
+# HTTP and WebSocket proxy routing (0.14.0-dev)
 
 Synchronous HTTP, `zcurl http submit` and `zcurl ws open` accept routing controls:
 
@@ -6,6 +6,7 @@ Synchronous HTTP, `zcurl http submit` and `zcurl ws open` accept routing control
 | --- | --- |
 | `-x URL`, `--proxy URL` | Choose a proxy; `''` disables proxy use even when the environment specifies one |
 | `--noproxy HOSTS` | Replace the bypass list with comma-separated hosts/domains/IP ranges; `'*'` bypasses every host and `''` bypasses none |
+| `--proxy-cacert FILE` | PEM CA bundle for an HTTPS proxy, independent of the origin's `--cacert` |
 
 ```zsh
 typeset -A response
@@ -39,7 +40,7 @@ zcurl http wait-any proxied direct -r response
 # Collect response[handle], then wait for and collect the remaining request.
 ```
 
-Each accepted request retains copies of explicit proxy/bypass strings. The
+Each accepted request retains copies of explicit proxy/bypass strings and proxy CA paths. The
 strings count toward the existing 128 MiB concurrent storage reservation.
 Submitting-function locals can disappear before polling. Subsequent synchronous
 requests reset these options; concurrent jobs keep their own settings.
@@ -53,7 +54,7 @@ Raw headers can contain a proxy CONNECT response before the origin response;
 
 ## HTTPS and authentication
 
-The tested proxy is an HTTP proxy: HTTP requests use forwarding, and HTTPS
+Tests cover HTTP and HTTPS proxies: HTTP requests use forwarding, and HTTPS
 requests use CONNECT followed by origin TLS. Certificate and hostname
 verification remain enabled; `--cacert` supplies trust for the origin server.
 Request headers supplied through `--header` are not added to CONNECT. For a
@@ -66,6 +67,28 @@ the tunneled origin request. There is no separate proxy-header or authentication
 method option. Per-request routing does not provide named-session isolation:
 connection and authentication caches remain managed by libcurl's shared pools.
 
+For an HTTPS proxy with a private CA, set `--proxy-cacert FILE`:
+
+```zsh
+zcurl --proxy https://proxy.example.com:8443 --noproxy '' \
+    --proxy-cacert /path/to/proxy-ca.pem --cacert /path/to/origin-ca.pem \
+    -r response -- https://api.example.com/items
+```
+
+Proxy certificate and hostname checks remain enabled independently of origin
+checks. `--cacert` does not grant trust to the proxy; `--proxy-cacert` does not
+grant trust to the origin. When omitted, proxy CA configuration uses libcurl's
+default trust bundle. The option also works with an environment-selected HTTPS
+proxy. It does not choose a proxy or affect a direct request or plain HTTP proxy.
+See libcurl's [proxy CA option](https://curl.se/libcurl/c/CURLOPT_PROXY_CAINFO.html).
+
+The path must be a nonempty literal word; duplicate options and embedded NUL are
+rejected. Libcurl copies the path, but reads the file during TLS setup: keep the
+file available until the transfer or open handshake completes. Concurrent requests
+count the copied path toward their storage reservation. Subsequent synchronous
+requests reset the setting, and concurrent jobs and WS handles retain their own
+configuration. Existing result fields report TLS failures as transport errors.
+
 ## WebSocket connections
 
 ```zsh
@@ -76,11 +99,13 @@ zcurl ws send events --data hello
 zcurl ws poll events --timeout 100 -r response
 ```
 
-Both `ws://` and `wss://` use CONNECT through the HTTP proxy in the tested
+Both `ws://` and `wss://` use CONNECT through HTTP and HTTPS proxies in the tested
 libcurl build. The proxy must permit tunnels to the origin port, including
 plain WS ports. WSS performs origin TLS inside the tunnel; plain WS remains
 unencrypted. Handshake headers are excluded from the CONNECT request, but a
 plain WS tunnel still exposes its traffic to the proxy.
+For an HTTPS proxy, `open` accepts `--proxy-cacert FILE` to verify the outer TLS
+connection. WSS still uses `--cacert` for the origin inside that connection.
 
 `open` accepts the same empty-string, bypass and environment rules as HTTP.
 Explicit strings are copied by libcurl and may come from function locals.
@@ -91,10 +116,10 @@ module unload release tunnels through the ordinary WebSocket cleanup path.
 
 ## Scope
 
-HTTP proxy forwarding and HTTPS/WS/WSS-over-HTTP CONNECT are validated here.
-HTTPS proxy servers, SOCKS proxies, other authentication methods and platform
-combinations need separate integration tests. `--cacert` does not configure
-trust for a TLS connection to an HTTPS proxy.
+HTTP forwarding and HTTPS/WS/WSS CONNECT through HTTP and HTTPS proxies are
+validated here with libcurl's OpenSSL backend. SOCKS proxies, other TLS backends,
+other authentication methods and platform combinations need separate integration
+tests. There is no proxy client-certificate, CA-directory or verification-disable option.
 
 ## Validation
 
@@ -108,3 +133,8 @@ direct/proxied handles, binary frames, fragmented UTF-8, interleaved ping/pong,
 graceful close, authenticated tunnels and reset/unload cleanup. Origin handshake
 authentication is checked independently of proxy authentication, with no proxy
 credentials in the origin request. No external proxy is contacted.
+
+The HTTPS proxy has its own generated certificate. Tests reject untrusted proxy
+certificates and incorrect proxy hostnames, reject origin certificates trusted
+only by the proxy bundle, verify settings reset and concurrent path ownership,
+and exchange binary HTTP bodies and WS/WSS frames through nested TLS connections.

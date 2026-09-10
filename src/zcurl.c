@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.13.0-dev"
+#define ZCURL_VERSION "0.14.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -45,7 +45,7 @@ struct http_input {
 
 struct request {
     char *url, *ca, *method, *data, *result;
-    char *proxy, *noproxy;
+    char *proxy, *noproxy, *proxy_ca;
     size_t data_len;
     long timeout, connect_timeout, max_body;
     int fail_http, head, has_data, has_input, input_fd, has_output, output_fd;
@@ -414,7 +414,7 @@ add_header(struct request *r, const char *value)
 }
 
 enum option_id { CA, TIMEOUT, CONNECT_TIMEOUT, METHOD, HEADER, DATA, RESULT,
-                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD, COMPRESSED, PROXY, NOPROXY };
+                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD, COMPRESSED, PROXY, NOPROXY, PROXY_CA };
 struct option_spec { const char *short_name, *long_name; enum option_id id; int value; };
 static const struct option_spec option_specs[] = {
     {"-c", "--cacert", CA, 1},
@@ -432,6 +432,7 @@ static const struct option_spec option_specs[] = {
     {NULL, "--compressed", COMPRESSED, 0},
     {"-x", "--proxy", PROXY, 1},
     {NULL, "--noproxy", NOPROXY, 1},
+    {NULL, "--proxy-cacert", PROXY_CA, 1},
 };
 
 static int
@@ -490,6 +491,7 @@ parse_request(char **args, struct request *r)
         case CA: r->ca = value; if (!*value) goto invalid; break;
         case PROXY: r->proxy = value; break;
         case NOPROXY: r->noproxy = value; break;
+        case PROXY_CA: r->proxy_ca = value; if (!*value) goto invalid; break;
         case METHOD:
             if (!token(value, strlen(value))) goto invalid;
             r->method = value;
@@ -655,6 +657,9 @@ configure_http(CURL *easy, struct request *r, struct buffer *b,
      * meaningful override. libcurl copies both strings for concurrent jobs. */
     if (r->proxy) SET(CURLOPT_PROXY, r->proxy);
     if (r->noproxy) SET(CURLOPT_NOPROXY, r->noproxy);
+    SET(CURLOPT_PROXY_SSL_VERIFYPEER, 1L);
+    SET(CURLOPT_PROXY_SSL_VERIFYHOST, 2L);
+    if (r->proxy_ca) SET(CURLOPT_PROXY_CAINFO, r->proxy_ca);
     if (r->ca)
         SET(CURLOPT_CAINFO, r->ca);
     if (r->has_input) {
@@ -824,6 +829,7 @@ help(void)
          "      --compressed         Negotiate and decode HTTP content compression\n"
          "  -x, --proxy URL          Override HTTP proxy; empty disables proxies\n"
          "      --noproxy HOSTS      Override proxy bypass list; empty bypasses none\n"
+         "      --proxy-cacert FILE   PEM trust file for an HTTPS proxy\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"

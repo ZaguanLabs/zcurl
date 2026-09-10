@@ -298,6 +298,9 @@ ws_open(const char *name, struct request *r, long max_queue, long max_message)
     WSET(CURLOPT_HEADEROPT, (long)CURLHEADER_SEPARATE);
     if (r->proxy) WSET(CURLOPT_PROXY, r->proxy);
     if (r->noproxy) WSET(CURLOPT_NOPROXY, r->noproxy);
+    WSET(CURLOPT_PROXY_SSL_VERIFYPEER, 1L);
+    WSET(CURLOPT_PROXY_SSL_VERIFYHOST, 2L);
+    if (r->proxy_ca) WSET(CURLOPT_PROXY_CAINFO, r->proxy_ca);
     if (r->ca) WSET(CURLOPT_CAINFO, r->ca);
     rc = ws_handshake(w, r->timeout);
     curl_easy_getinfo(w->easy, CURLINFO_RESPONSE_CODE, &status);
@@ -519,6 +522,7 @@ websocket_command(char **args)
         else if (!strcmp(arg, "--reason")) { bit = 4096u; allowed = operation == WS_CLOSE; }
         else if (!strcmp(arg, "--proxy") || !strcmp(arg, "-x")) { bit = 8192u; allowed = operation == WS_OPEN; }
         else if (!strcmp(arg, "--noproxy")) { bit = 16384u; allowed = operation == WS_OPEN; }
+        else if (!strcmp(arg, "--proxy-cacert")) { bit = 32768u; allowed = operation == WS_OPEN; }
         else goto usage;
         if (!allowed || (bit != 4u && (seen & bit))) goto usage;
         seen |= bit;
@@ -542,6 +546,7 @@ websocket_command(char **args)
         case 2048u: if (!decimal(value, 1000, 4999, &close_code) || !ws_valid_close(close_code)) goto usage; break;
         case 8192u: r.proxy = value; break;
         case 16384u: r.noproxy = value; break;
+        case 32768u: if (!*value) goto usage; r.proxy_ca = value; break;
         }
     }
     for (p = websockets; p; p = p->next) {
