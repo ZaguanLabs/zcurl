@@ -1,4 +1,4 @@
-# Validation of 0.9.0-dev
+# Validation of 0.10.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -63,6 +63,24 @@ every resolver, signal trap, job-control combination, or backend behavior.
 These checks cover connection sockets and retained file duplicates, not every
 descriptor opened internally by libcurl backends. See [the scope](descriptors.md).
 
+## HTTP compression coverage
+
+- Gzip and zlib deflate generated independently by the loopback fixture; all
+  byte values and trailing newlines preserved in scalars and output files.
+- HTTP and verified HTTPS, concurrent scalar/file output, mixed decoding
+  policies, unchanged snapshot shapes, file upload and uncompressed responses.
+- Server-observed negotiation, literal header override/suppression, raw default
+  behavior, and synchronous option reset on a reused connection.
+- HEAD and decoded HTTP error bodies; unknown encodings and corrupt gzip in
+  synchronous/concurrent requests, followed by successful requests.
+- An inclusive scalar limit and decoded expansion limits for scalars and files;
+  Python independently checks actual output bytes. Invalid/duplicate flags and
+  non-HTTP use cause no network requests.
+
+Gzip/deflate support in the linked libcurl is required for these tests. Other
+decoders and every form of damaged stream are not covered; see
+[compression behavior](compression.md).
+
 ## Handle-discovery coverage
 
 - Empty arrays, creation order, separate namespaces, duplicate rejection,
@@ -77,7 +95,7 @@ descriptor opened internally by libcurl backends. See [the scope](descriptors.md
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 72 resulting command buffers, including:
+completion widget. The test checks 77 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -85,6 +103,7 @@ completion widget. The test checks 72 resulting command buffers, including:
   suggestions for new names, and updates after drop and feature toggling.
 - Methods, frame types, body/HEAD exclusions, repeated headers, options after
   a URL, end-of-options handling, and unsupported attached argument forms.
+- HTTP-only `--compressed` suggestions and suppression after use.
 - Associative versus indexed result arrays; filtering readonly, converting,
   unique and non-ASCII names.
 - CA filenames containing spaces and brackets, URL scheme prefixes, mid-word

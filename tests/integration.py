@@ -18,6 +18,7 @@ import threading
 import time
 import websocket_fixture
 import completion
+import compression
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -70,6 +71,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             websocket_fixture.serve(self)
             return
         request_body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path.startswith('/compressed/'):
+            compression.serve(self, request_body)
+            return
         if self.path == "/release-ws":
             self.server.ws_release.set()
         if self.path == "/release-http":
@@ -528,6 +532,7 @@ if __name__ == "__main__":
         api_test(env, plain, temp)
         loader_test(env)
         completion.test(env, plain, temp)
+        compression.test(env, plain, temp, run)
         before = plain.request_count
         print(run(env, (ROOT / 'tests' / 'handles.zsh').read_text()))
         assert plain.request_count == before + 4, 'handle discovery caused unexpected HTTP I/O'

@@ -84,7 +84,9 @@ request. Headers and all other HTTP metadata keep their existing semantics and
 result shape. For pending concurrent jobs, `info` also exposes the number of
 bytes already written. `collect` reports the result without rereading the file.
 
-`--max-body` still limits raw response bytes: default 8 MiB, maximum 64 MiB.
+`--max-body` limits response body bytes: default 8 MiB, maximum 64 MiB.
+With [`--compressed`](compression.md), bytes are decoded before writing and
+the limit applies to the decoded output. Response headers stay unchanged.
 The option bounds total output for this request, not the file's existing size.
 A callback chunk that would cross the limit is rejected before any of that
 chunk is written, matching the in-memory body-limit behavior. Earlier chunks

@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.9.0-dev** is intended for trying in a project: methods, request
+Version **0.10.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -234,6 +234,7 @@ zcurl --reset
 | `-d`, `--data BYTES` | Literal request body |
 | `--data-fd FD` | Upload the captured remaining range of an open readable regular file |
 | `-f`, `--fail` | Return status 22 for HTTP >=400, retaining the body |
+| `--compressed` | Negotiate supported HTTP content encodings and decode response bytes |
 | `-c`, `--cacert FILE` | PEM trust file, with hostname verification still enabled |
 | `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
 | `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |
@@ -259,6 +260,12 @@ scheme defaults to HTTPS.
 Redirects are returned to the caller and are not followed. There is no
 insecure TLS option.
 
+`--compressed` enables response decompression for synchronous requests and
+`http submit`, including file output. `--max-body` and `bytes` then count decoded
+bytes; response headers retain the server's encoded `Content-Length` and
+`Content-Encoding`. Without the flag, content remains encoded. See
+[compression behavior and limits](docs/compression.md).
+
 ## Handle discovery
 
 `zcurl_http_handles` and `zcurl_ws_handles` are read-only indexed arrays of
@@ -283,7 +290,7 @@ requests and module unload.
 
 | Field | Meaning |
 | --- | --- |
-| `body` | Raw response bytes, preserving NUL and trailing newlines; empty with `--output-fd` |
+| `body` | Response bytes (decoded with `--compressed`), preserving NUL and trailing newlines; empty with `--output-fd` |
 | `headers` | Raw headers, preserving CRLF, duplicates, interim blocks and trailers |
 | `http_status` | HTTP status; zero if none was received |
 | `code` | libcurl result; zero on transfer success; -1 if no transfer was attempted |
@@ -291,7 +298,7 @@ requests and module unload.
 | `error_kind` | `none`, `usage`, `transport`, `http`, `body-limit`, `header-limit`, `input`, `output`, `memory`, or `result` |
 | `error` | Diagnostic text; empty on success |
 | `complete` | 1 if the transfer completed successfully, even for an HTTP error response |
-| `bytes` | Raw body bytes stored, or successfully written with `--output-fd` |
+| `bytes` | Body bytes stored, or successfully written with `--output-fd`; decoded with `--compressed` |
 | `effective_url` | URL reported by libcurl |
 | `content_type` | Content type reported by libcurl, or empty |
 | `new_connections` | Newly opened connections during the transfer |

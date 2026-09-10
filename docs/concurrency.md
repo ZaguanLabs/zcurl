@@ -85,6 +85,10 @@ fi
 
 ## Results and ownership
 
+Submission accepts [`--compressed`](compression.md) to negotiate and decode
+response content. Each job owns its decoding policy; body limits and byte
+counts apply after decoding, including file output. Headers remain unchanged.
+
 Concurrent snapshots contain the 13 existing HTTP fields plus `handle`,
 `event`, and `state` (16 keys). Synchronous HTTP snapshots keep 13 keys;
 WebSocket snapshots keep their existing shape. The corresponding global

@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.9.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.10.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -11,6 +11,10 @@ not implemented.
 Read-only native arrays now expose retained HTTP and WebSocket names for
 script discovery and existing-handle completion without driving requests or
 replacing results; see [handle discovery](handles.md).
+
+HTTP requests now optionally negotiate and decode compressed responses for
+scalar and file output, with body limits applied after expansion; see
+[compression](compression.md).
 
 The working path is `Zsh builtin → libcurl → TLS backend → network`. The C
 module is the binding. A separate executable is an architectural option,
