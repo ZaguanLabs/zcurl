@@ -1,4 +1,4 @@
-# Native Zsh completion (0.11.0-dev)
+# Native Zsh completion (0.12.0-dev)
 
 `completions/_zcurl` provides optional compsys completion for the module's CLI.
 It describes arguments without invoking `zcurl`, opening connections, driving
@@ -49,6 +49,8 @@ your startup configuration.
   `--header` remains available. Short and long aliases suppress each other.
 - `--compressed` for synchronous HTTP and `http submit`, with duplicate
   suggestions suppressed and no offer in WebSocket or other HTTP operations.
+- HTTP proxy/bypass options and proxy URL scheme prefixes. Bypass lists remain
+  literal input; completion does not discover proxies or look up hosts.
 - CA-file paths using standard `_files` quoting, including spaces and shell
   metacharacters. HTTP URL positions offer `http://` and `https://`; WebSocket
   URL positions offer `ws://` and `wss://`.

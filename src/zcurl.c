@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.11.0-dev"
+#define ZCURL_VERSION "0.12.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -45,6 +45,7 @@ struct http_input {
 
 struct request {
     char *url, *ca, *method, *data, *result;
+    char *proxy, *noproxy;
     size_t data_len;
     long timeout, connect_timeout, max_body;
     int fail_http, head, has_data, has_input, input_fd, has_output, output_fd;
@@ -413,7 +414,7 @@ add_header(struct request *r, const char *value)
 }
 
 enum option_id { CA, TIMEOUT, CONNECT_TIMEOUT, METHOD, HEADER, DATA, RESULT,
-                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD, COMPRESSED };
+                 MAX_BODY, FAIL_HTTP, HEAD, OUTPUT_FD, DATA_FD, COMPRESSED, PROXY, NOPROXY };
 struct option_spec { const char *short_name, *long_name; enum option_id id; int value; };
 static const struct option_spec option_specs[] = {
     {"-c", "--cacert", CA, 1},
@@ -429,6 +430,8 @@ static const struct option_spec option_specs[] = {
     {NULL, "--output-fd", OUTPUT_FD, 1},
     {NULL, "--data-fd", DATA_FD, 1},
     {NULL, "--compressed", COMPRESSED, 0},
+    {"-x", "--proxy", PROXY, 1},
+    {NULL, "--noproxy", NOPROXY, 1},
 };
 
 static int
@@ -485,6 +488,8 @@ parse_request(char **args, struct request *r)
         }
         switch (spec->id) {
         case CA: r->ca = value; if (!*value) goto invalid; break;
+        case PROXY: r->proxy = value; break;
+        case NOPROXY: r->noproxy = value; break;
         case METHOD:
             if (!token(value, strlen(value))) goto invalid;
             r->method = value;
@@ -646,6 +651,10 @@ configure_http(CURL *easy, struct request *r, struct buffer *b,
     /* An empty string negotiates every decoder supported by this libcurl.
      * The write callback receives decoded bytes and enforces --max-body. */
     SET(CURLOPT_ACCEPT_ENCODING, r->compressed ? "" : NULL);
+    /* NULL leaves environment policy intact; an explicit empty string is a
+     * meaningful override. libcurl copies both strings for concurrent jobs. */
+    if (r->proxy) SET(CURLOPT_PROXY, r->proxy);
+    if (r->noproxy) SET(CURLOPT_NOPROXY, r->noproxy);
     if (r->ca)
         SET(CURLOPT_CAINFO, r->ca);
     if (r->has_input) {
@@ -813,6 +822,8 @@ help(void)
          "  -r, --result ARRAY        Replace a declared ordinary associative array\n"
          "  -f, --fail                Return 22 for HTTP >=400; retain the response\n"
          "      --compressed         Negotiate and decode HTTP content compression\n"
+         "  -x, --proxy URL          Override HTTP proxy; empty disables proxies\n"
+         "      --noproxy HOSTS      Override proxy bypass list; empty bypasses none\n"
          "      --max-body BYTES      Response limit (default 8 MiB; maximum 64 MiB)\n"
          "      --output-fd FD        Write response bytes to an open writable regular file\n"
          "      --                    End options\n"

@@ -20,6 +20,7 @@ import time
 import websocket_fixture
 import completion
 import compression
+import proxy
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -584,6 +585,7 @@ if __name__ == "__main__":
         loader_test(env)
         completion.test(env, plain, temp)
         compression.test(env, plain, temp, run)
+        proxy.test(env, plain, temp, run)
         before = plain.request_count
         print(run(env, (ROOT / 'tests' / 'handles.zsh').read_text()))
         assert plain.request_count == before + 4, 'handle discovery caused unexpected HTTP I/O'

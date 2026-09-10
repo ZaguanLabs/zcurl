@@ -1,4 +1,4 @@
-# Validation of 0.11.0-dev
+# Validation of 0.12.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -15,7 +15,8 @@ make benchmark
 
 The Python fixture creates HTTP/1.1 loopback servers and a one-day localhost
 certificate under a temporary directory, including a non-ASCII path. The
-test shell has proxy variables removed and runs with `zsh -df`.
+test shell has inherited proxy variables removed and runs with `zsh -df`.
+Proxy-specific tests install their own loopback proxy environment.
 No public endpoints, account credentials or system certificate changes are used.
 
 ## Coverage
@@ -64,6 +65,22 @@ every resolver, signal trap, job-control combination, or backend behavior.
 These checks cover connection sockets and retained file duplicates, not every
 descriptor opened internally by libcurl backends. See [the scope](descriptors.md).
 
+## HTTP proxy coverage
+
+- Environment defaults, explicit direct routing, host/list/wildcard/CIDR
+  bypasses, empty-list overrides and per-request reset without environment edits.
+- Concurrent direct and proxied requests crossing an origin response barrier;
+  copied proxy/bypass strings surviving submitting-function scope.
+- HTTP forwarding, HTTPS CONNECT and connection reuse; origin certificate and
+  hostname rejection, refused tunnels and refused proxy connections with no
+  direct fallback.
+- Origin authorization/custom headers absent from CONNECT, Basic proxy URL
+  credentials, credential reset and no proxy authorization in tunneled requests.
+- Exact binary concurrent file output through CONNECT, and invalid options
+  rejected before either proxy or origin requests.
+
+Only loopback HTTP proxies are covered. See [routing and limitations](proxy.md).
+
 ## HTTP compression coverage
 
 - Gzip and zlib deflate generated independently by the loopback fixture; all
@@ -96,7 +113,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 88 resulting command buffers, including:
+completion widget. The test checks 98 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -107,6 +124,7 @@ completion widget. The test checks 88 resulting command buffers, including:
 - Methods, frame types, body/HEAD exclusions, repeated headers, options after
   a URL, end-of-options handling, and unsupported attached argument forms.
 - HTTP-only `--compressed` suggestions and suppression after use.
+- HTTP proxy/bypass flags, short aliases, duplicate suppression and scheme prefixes.
 - Associative versus indexed result arrays; filtering readonly, converting,
   unique and non-ASCII names.
 - CA filenames containing spaces and brackets, URL scheme prefixes, mid-word
@@ -323,5 +341,5 @@ heavy work. This is a loopback overhead experiment, not a WAN throughput test.
 
 Pipe/socket streaming, autonomous background transfers, arbitrary fork inheritance,
 automatic redirects, cookies, named sessions, HTTP/2/3-specific behavior,
-proxy integration and cross-platform ABI compatibility still need their own
+broader proxy integration and cross-platform ABI compatibility still need their own
 implementation and/or test coverage before being relied on.

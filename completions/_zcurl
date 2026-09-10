@@ -94,6 +94,8 @@ case $mode:$operation in
       '(-I --head -d --data --data-fd)'{-I,--head}'[request headers only]'
       '(-f --fail)'{-f,--fail}'[return 22 for HTTP errors, retaining the response]'
       '--compressed[negotiate and decode HTTP content compression]'
+      '(-x --proxy)'{-x,--proxy}'[override proxy; empty disables proxies]:proxy URL:->proxy-url'
+      '--noproxy[override bypass list; empty bypasses none]:comma-separated hosts (or *):'
       '--max-body[response limit, default 8388608 bytes]:bytes (1..67108864):'
       '--output-fd[write the response directly to a regular file]:writable regular-file descriptor:'
     )
@@ -161,6 +163,7 @@ case $state in
     _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https://
     ;;
   http-url) _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https:// ;;
+  proxy-url) _wanted urls expl 'proxy URL' compadd -S '' -- http:// https:// socks4:// socks4a:// socks5:// socks5h:// ;;
   ws-url) _wanted urls expl 'WS or WSS URL' compadd -S '' -- ws:// wss:// ;;
   methods)
     if (( ${+opt_args[-I]} || ${+opt_args[--head]} )); then

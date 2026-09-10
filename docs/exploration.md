@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.11.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.12.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -73,6 +73,8 @@ requests turn out to be the main need.
 3. **Session identity.** Named sessions could separate credentials, cookies,
    proxy settings and trust configuration. `curl_easy_reset` resets options
    but retains caches and other state; it is not a security isolation boundary.
+   [Per-request proxy/bypass options](proxy.md) now select routing independently,
+   with HTTP forwarding and HTTPS CONNECT tests, while sharing libcurl pools.
 4. **Forks and lifecycle.** The current PID guard is an experimental restriction.
    Children need explicitly independent state; merely duplicating a handle
    does not make shared TLS sockets safe. Connection sockets and retained file

@@ -115,6 +115,8 @@ http_submit(const char *name, struct request *r)
     size_t count = 0, reserve = (r->has_output ? 0 : (size_t)r->max_body) + HEADER_LIMIT;
     size_t sizes[] = {r->data_len, r->header_bytes, strlen(r->url) + 1,
                      r->ca ? strlen(r->ca) + 1 : 0,
+                     r->proxy ? strlen(r->proxy) + 1 : 0,
+                     r->noproxy ? strlen(r->noproxy) + 1 : 0,
                      r->method ? strlen(r->method) + 1 : 0};
     size_t i;
     CURLcode rc;

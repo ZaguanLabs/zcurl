@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.11.0-dev** is intended for trying in a project: methods, request
+Version **0.12.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -91,7 +91,9 @@ zcurl --result response --head -- "$url"
 Each call resets request options, including method, body, headers and CA file,
 while retaining the connection pool. Supply authentication headers on each
 request. No cookie engine is enabled. curl's CLI config files are not read;
-libcurl's proxy environment settings still apply.
+libcurl's proxy environment settings apply unless overridden by `--proxy` or
+`--noproxy`. Use `--proxy ''` for an explicitly direct HTTP request; see
+[per-request routing](docs/proxy.md).
 
 `--data` sends literal bytes, including NUL and trailing newlines. It does not
 read `@filename`, URL-encode data, or infer JSON content types. Add the
@@ -240,6 +242,8 @@ zcurl --reset
 | `--data-fd FD` | Upload the captured remaining range of an open readable regular file |
 | `-f`, `--fail` | Return status 22 for HTTP >=400, retaining the body |
 | `--compressed` | Negotiate supported HTTP content encodings and decode response bytes |
+| `-x`, `--proxy URL` | Override the proxy for this HTTP request; an empty string disables proxies |
+| `--noproxy HOSTS` | Override the comma-separated bypass list; `'*'` bypasses all, `''` bypasses none |
 | `-c`, `--cacert FILE` | PEM trust file, with hostname verification still enabled |
 | `-t`, `--timeout MS` | Total timeout, 1..600000; default 10000 |
 | `--connect-timeout MS` | Connection timeout, 1..600000; default 3000; total timeout also applies |

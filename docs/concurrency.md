@@ -1,4 +1,4 @@
-# Concurrent HTTP (0.11.0-dev)
+# Concurrent HTTP (0.12.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
@@ -137,6 +137,10 @@ retain the existing 16-field concurrent result shape.
 Submission accepts [`--compressed`](compression.md) to negotiate and decode
 response content. Each job owns its decoding policy; body limits and byte
 counts apply after decoding, including file output. Headers remain unchanged.
+
+[`--proxy` and `--noproxy`](proxy.md) select per-request routing without changing
+the shell environment. Explicit strings are copied and count toward the shared
+storage reservation, so requests can use different routes in the same pool.
 
 Concurrent snapshots contain the 13 existing HTTP fields plus `handle`,
 `event`, and `state` (16 keys). Synchronous HTTP snapshots keep 13 keys;
