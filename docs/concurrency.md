@@ -1,4 +1,4 @@
-# Concurrent HTTP (0.19.0-dev)
+# Concurrent HTTP (0.20.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.

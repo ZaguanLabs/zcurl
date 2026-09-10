@@ -1,4 +1,4 @@
-# Named HTTP sessions (0.19.0-dev)
+# Named HTTP sessions (0.20.0-dev)
 
 Named sessions give HTTP callers independent libcurl connection pools.
 Create a session explicitly, then select it on each request:
@@ -30,6 +30,7 @@ WebSocket names occupy independent namespaces.
 | `zcurl session reset NAME` | Close that session's connections and destroy both its synchronous and concurrent handles, retaining the name, configuration and creation order |
 | `zcurl session configure NAME [options]` | Update defaults for future requests without closing connections |
 | `zcurl session configure NAME --defaults` | Restore standard numeric defaults without closing connections |
+| `zcurl session info NAME --result ARRAY` | Copy defaults and the retained-job count into a declared associative array without I/O |
 | `zcurl session drop NAME` | Close the pool and release the name |
 | `zcurl --session NAME [options] URL` | Execute a synchronous request in the existing named session |
 | `zcurl http submit HANDLE --session NAME [options] URL` | Submit a job to the session's concurrent pool |
@@ -46,7 +47,8 @@ caller file descriptors; requests never create sessions implicitly or fall back
 to the default pool.
 
 All management commands preserve the complete last transfer result,
-including on failure. They do not accept `--result`; use their exit status.
+including on failure. `info` requires `--result`; the other management commands
+use only their exit status and do not accept a result destination.
 Requests keep the ordinary 13-field synchronous or 16-field concurrent snapshot
 shape and accept the existing HTTP options, including proxy controls, compression and file I/O.
 
@@ -103,6 +105,45 @@ reset retains configuration while closing pools; drop/recreate, global reset
 and unload discard it. Restoring `--defaults` changes configuration while
 retaining connections. The 13-/16-field HTTP result shapes are unchanged.
 
+## Inspecting a session
+
+```zsh
+typeset -A session_state
+zcurl session info inventory --result session_state
+print -r -- "$session_state[timeout] ms; $session_state[retained_jobs] retained jobs"
+```
+
+`info NAME -r ARRAY` and `info NAME --result ARRAY` replace the entire declared,
+writable ordinary associative array with these five fields:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | The existing named session |
+| `timeout` | Default total request timeout in milliseconds |
+| `connect_timeout` | Default connection timeout in milliseconds |
+| `max_body` | Default response limit in bytes |
+| `retained_jobs` | Pending, completed and cancelled concurrent jobs still owned by this session |
+
+The defaults describe future requests. Individual requests may override them,
+and already submitted jobs keep their captured settings. The count excludes
+jobs in other sessions and the unnamed pool, synchronous calls and WebSockets.
+Collection or drop removes a job from the count. A nonzero count explains why
+session reset/drop rejects the operation.
+
+Inspection does not drive requests, expire jobs, create handles or change
+connection reuse. It preserves every `zcurl_*` transfer parameter, including
+previous errors. It prints no data to stdout; use the destination array and exit
+status. The array owns a snapshot that survives reconfiguration, drop and unload.
+Locally declared arrays follow Zsh dynamic scope.
+
+Unknown sessions, missing or repeated result options, extra arguments and
+invalid result destinations return 2 with a diagnostic. Errors leave the
+supplied array and transfer parameters unchanged. Scalars, indexed arrays,
+readonly/special/tied/converting associations, subscripts, undeclared names and
+non-ASCII identifiers are rejected, using the ordinary HTTP result rules.
+Inspection still works when session discovery is disabled. The owning-shell and
+reentry guards apply, so an inherited child cannot inspect the parent's session.
+
 ## What a session retains
 
 Each session owns a synchronous easy/multi pair and a separate concurrent multi
@@ -144,3 +185,8 @@ limits/deadlines, storage admission and bounded file output. A local TCP peer
 that accepts TLS bytes without replying checks connection budgets. Validation,
 feature toggles, inherited shells and caller options are covered without public
 network access.
+
+Inspection tests cover configured and restored defaults, the complete retained-job
+lifecycle, independent snapshots, dynamic scope and strict destination validation.
+Origin connection and request counts check absence of I/O and preserved reuse;
+previous transfer errors and pending-job snapshots remain unchanged.

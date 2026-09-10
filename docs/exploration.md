@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.19.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.20.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -74,6 +74,7 @@ requests turn out to be the main need.
    synchronous and concurrent pools, with targeted reset and drop.
    `curl_easy_reset` resets options but retains caches and other state; it is not
    a security isolation boundary. Session timeout and response-size defaults now apply to future requests.
+   Session inspection exposes those defaults and retained-job counts without I/O.
    Broader configuration and cookies remain open work.
    [Per-request proxy/bypass options](proxy.md) now select routing independently,
    with HTTP forwarding and HTTPS CONNECT tests, while sharing libcurl HTTP pools.

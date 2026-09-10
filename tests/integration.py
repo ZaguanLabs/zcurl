@@ -642,6 +642,11 @@ if __name__ == "__main__":
             assert reply['method'] == 'GET' and reply['body'] == ''
             assert 'authorization' not in {k.lower() for k, _ in reply['headers']}
         assert (temp / 'session-output.bin').read_bytes() == b'file\0session\n\n'
+        info_before = (plain.connections, plain.request_count)
+        session_info = run(env, (ROOT / 'tests' / 'session-info.zsh').read_text())
+        assert session_info.startswith('PASS: session information'), session_info
+        assert (plain.connections - info_before[0], plain.request_count - info_before[1]) == (2, 4), 'session inspection caused I/O or changed pool reuse'
+        print(session_info)
         with stalled_tls() as stalled_url:
             defaults = run(dict(env, ZCURL_TEST_STALLED_TLS=stalled_url),
                            (ROOT / 'tests' / 'session-defaults.zsh').read_text())

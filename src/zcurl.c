@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.19.0-dev"
+#define ZCURL_VERSION "0.20.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -869,6 +869,8 @@ help(void)
          "zcurl session configure NAME [-t MS] [--connect-timeout MS] [--max-body BYTES]\n"
          "zcurl session configure NAME --defaults\n"
          "  Set request defaults or restore standard values; retained jobs are unchanged.\n"
+         "zcurl session info NAME --result ARRAY\n"
+         "  Inspect defaults and retained job count; preserves transfer results.\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
          "zcurl headers FIELD --from RAW --result ARRAY [--trailers]\n"

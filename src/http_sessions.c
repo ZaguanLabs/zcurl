@@ -87,6 +87,40 @@ sessions_cleanup(void)
     close_session(&default_session);
 }
 
+/* Publish owned metadata without touching transfer globals or driving jobs.
+ * Signals remain queued and only ordinary hash parameters may be replaced. */
+static int
+session_info(struct http_session *s, char **args)
+{
+    const char *keys[] = {"name", "timeout", "connect_timeout", "max_body", "retained_jobs"};
+    uintmax_t numbers[] = {(uintmax_t)s->timeout, (uintmax_t)s->connect_timeout,
+                          (uintmax_t)s->max_body, (uintmax_t)s->http_jobs};
+    char *option, *target, **values;
+    size_t i;
+    if (!args[0] || !args[1] || args[2] || !(option = text_argument(args[0])) ||
+        (strcmp(option, "--result") && strcmp(option, "-r")) ||
+        !(target = text_argument(args[1])) || !result_parameter(target)) {
+        zwarnnam("zcurl session", "info requires --result ARRAY (a declared writable ordinary associative array)");
+        return 2;
+    }
+    values = zalloc((2 * ARRAY_SIZE(keys) + 1) * sizeof(*values));
+    for (i = 0; i < ARRAY_SIZE(keys); ++i) {
+        char number[64];
+        values[2 * i] = ztrdup(keys[i]);
+        if (!i) values[2 * i + 1] = ztrdup(s->name);
+        else {
+            snprintf(number, sizeof(number), "%ju", numbers[i - 1]);
+            values[2 * i + 1] = ztrdup(number);
+        }
+    }
+    values[2 * i] = NULL;
+    if (!sethparam(target, values)) {
+        zwarnnam("zcurl session", "could not publish session information");
+        return 2;
+    }
+    return 0;
+}
+
 /* Management preserves the last transfer result, including on failure.
  * The caller holds the normal owner/busy guard and queues signals. */
 static int
@@ -95,14 +129,14 @@ sessions_command(char **args)
     struct http_session *s, **link;
     char *operation, *name;
     size_t count = 0;
-    const char *message = "use zcurl session create|reset|drop|configure NAME (ASCII identifier, at most 64 characters)";
+    const char *message = "use zcurl session create|reset|drop|configure|info NAME (ASCII identifier, at most 64 characters)";
     int status = 2;
     if (!args[0] || !args[1] || !(operation = text_argument(args[0])) ||
         !(name = text_argument(args[1])) || !identifier(name) || strlen(name) > 64) goto error;
-    if (!strcmp(operation, "configure")) {
+    if (!strcmp(operation, "configure") || !strcmp(operation, "info")) {
         s = find_session(name);
         if (!s) { message = "unknown HTTP session"; goto error; }
-        return session_configure(s, args + 2);
+        return !strcmp(operation, "info") ? session_info(s, args + 2) : session_configure(s, args + 2);
     }
     if (args[2]) goto error;
     if (strcmp(operation, "create") && strcmp(operation, "reset") && strcmp(operation, "drop")) goto error;
