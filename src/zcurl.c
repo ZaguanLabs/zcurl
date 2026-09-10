@@ -10,8 +10,9 @@
 #include <limits.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 
-#define ZCURL_VERSION "0.8.0-dev"
+#define ZCURL_VERSION "0.8.1-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -119,6 +120,40 @@ progress(UNUSED(void *context), UNUSED(curl_off_t dt), UNUSED(curl_off_t dn),
     return interrupted();
 }
 
+/* Connection sockets can outlive their easy handle in a multi cache. These
+ * callbacks therefore use no per-request state. Keep sockets above the shell's
+ * single-digit redirection range and reject {var} closure through fdtable. */
+static curl_socket_t
+open_connection_socket(UNUSED(void *context), curlsocktype purpose, struct curl_sockaddr *address)
+{
+    int fd, owned, saved_errno;
+    if (purpose != CURLSOCKTYPE_IPCXN) return CURL_SOCKET_BAD;
+    fd = socket(address->family, address->socktype, address->protocol);
+    if (fd < 0) return CURL_SOCKET_BAD;
+    if (fd < 10) {
+        owned = fcntl(fd, F_DUPFD_CLOEXEC, 10);
+        saved_errno = errno;
+        close(fd);
+        if (owned < 0) { errno = saved_errno; return CURL_SOCKET_BAD; }
+    } else {
+        owned = fd;
+        if (fcntl(owned, F_SETFD, FD_CLOEXEC) < 0) {
+            saved_errno = errno;
+            close(owned);
+            errno = saved_errno;
+            return CURL_SOCKET_BAD;
+        }
+    }
+    addmodulefd(owned, FDT_INTERNAL);
+    return owned;
+}
+
+static int
+close_connection_socket(UNUSED(void *context), curl_socket_t fd)
+{
+    return zclose(fd) < 0 ? 1 : 0;
+}
+
 /* All parameter publication happens with Zsh signals queued. */
 static void
 replace_text(char **target, const char *data, size_t len)
@@ -163,7 +198,7 @@ prepare_input(struct request *r, struct http_input *input)
         set_error("input", "could not duplicate input descriptor", 2);
         return 0;
     }
-    addmodulefd(fd, FDT_MODULE);
+    addmodulefd(fd, FDT_INTERNAL);
     input->active = 1;
     input->fd = fd;
     input->start = start;
@@ -224,7 +259,7 @@ seek_input(void *context, curl_off_t offset, int origin)
 }
 
 /* The duplicate shares the caller's file offset, but has its own lifetime.
- * Register it so Zsh cannot close it through ordinary descriptor syntax. */
+ * FDT_INTERNAL blocks {var} closure; FDT_MODULE does not on Zsh 5.9.2. */
 static int
 prepare_output(struct request *r, struct buffer *b)
 {
@@ -242,7 +277,7 @@ prepare_output(struct request *r, struct buffer *b)
         set_error("output", "could not duplicate output descriptor", 2);
         return 0;
     }
-    addmodulefd(fd, FDT_MODULE);
+    addmodulefd(fd, FDT_INTERNAL);
     b->streaming = 1;
     b->output_fd = fd;
     return 1;
@@ -592,6 +627,8 @@ configure_http(CURL *easy, struct request *r, struct buffer *b,
     SET(CURLOPT_SSL_VERIFYPEER, 1L);
     SET(CURLOPT_SSL_VERIFYHOST, 2L);
     SET(CURLOPT_NOSIGNAL, 1L);
+    SET(CURLOPT_OPENSOCKETFUNCTION, open_connection_socket);
+    SET(CURLOPT_CLOSESOCKETFUNCTION, close_connection_socket);
     SET(CURLOPT_TIMEOUT_MS, r->timeout);
     SET(CURLOPT_CONNECTTIMEOUT_MS, r->connect_timeout);
     SET(CURLOPT_ERRORBUFFER, diagnostic);

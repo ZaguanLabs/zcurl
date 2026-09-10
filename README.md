@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.8.0-dev** is intended for trying in a project: methods, request
+Version **0.8.1-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -316,6 +316,11 @@ scalar but cannot be passed in an external program's argv; use `print -rn`
 into a pipe or file for a binary consumer.
 
 ## Session and execution model
+
+Connection sockets and retained file descriptors are registered as private
+Zsh descriptors above the single-digit redirection range and marked close-on-exec.
+Ordinary `{fd}` closure and duplication are rejected. See
+[descriptor ownership](docs/descriptors.md) for cleanup and scope.
 
 The following describes synchronous HTTP. Explicit polling is documented in
 the [concurrent HTTP contract](docs/concurrency.md) and

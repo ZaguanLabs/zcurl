@@ -530,6 +530,8 @@ if __name__ == "__main__":
         completion.test(env, plain, temp)
         streaming_test(env, plain, temp)
         upload_test(env, plain, temp)
+        print(run(env, (ROOT / 'tests' / 'descriptors.zsh').read_text()))
+        assert (temp / 'protected-output.bin').read_bytes() == b'file\0payload\n\n'
         before = plain.request_count
         print(run(env, (ROOT / 'tests' / 'headers.zsh').read_text()))
         assert plain.request_count == before + 5, 'header lookups caused unexpected HTTP I/O'

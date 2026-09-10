@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.8.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.8.1-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -65,9 +65,11 @@ requests turn out to be the main need.
    but retains caches and other state; it is not a security isolation boundary.
 4. **Forks and lifecycle.** The current PID guard is an experimental restriction.
    Children need explicitly independent state; merely duplicating a handle
-   does not make shared TLS sockets safe. Unload/reload, exec descriptor
-   inheritance, signal traps, reentry and module feature toggles need further
-   stress testing.
+   does not make shared TLS sockets safe. Connection sockets and retained file
+   descriptors now have [private descriptor registration](descriptors.md),
+   with close/duplication, exec inheritance and repeated cleanup tests.
+   Libcurl auxiliary descriptors, other Zsh builds, signal traps, reentry and
+   module feature toggles still need further stress testing.
 5. **Concurrency.** Explicit overlapping transfers, cancellation and bounded
    storage are implemented. Next, measure real consuming workloads and determine
    whether they need scheduling independent of shell calls. Responsive typing

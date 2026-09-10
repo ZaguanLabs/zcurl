@@ -44,7 +44,9 @@ synchronous request is accepted or the concurrent request is submitted. That
 length becomes the upload size. An offset at or beyond EOF sends an empty body.
 An unrepresentable upload length is rejected before network I/O.
 
-Each request owns a close-on-exec duplicate registered with Zsh as module-owned.
+Each request owns a close-on-exec duplicate registered with Zsh as private/internal.
+Ordinary `{fd}` closure or duplication of that private descriptor is rejected;
+see [descriptor ownership](descriptors.md).
 The original can be closed or reused immediately after submission. The duplicate
 is released at transfer completion, failure, timeout or cancellation, and on
 drop, reset or unload. Concurrent completion releases it before collection;

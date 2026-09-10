@@ -285,6 +285,8 @@ ws_open(const char *name, struct request *r, long max_queue, long max_message)
     WSET(CURLOPT_SSL_VERIFYPEER, 1L);
     WSET(CURLOPT_SSL_VERIFYHOST, 2L);
     WSET(CURLOPT_NOSIGNAL, 1L);
+    WSET(CURLOPT_OPENSOCKETFUNCTION, open_connection_socket);
+    WSET(CURLOPT_CLOSESOCKETFUNCTION, close_connection_socket);
     WSET(CURLOPT_TIMEOUT_MS, r->timeout);
     WSET(CURLOPT_CONNECTTIMEOUT_MS, r->connect_timeout);
     WSET(CURLOPT_ERRORBUFFER, w->diagnostic);

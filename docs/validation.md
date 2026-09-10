@@ -1,4 +1,4 @@
-# Validation of 0.8.0-dev
+# Validation of 0.8.1-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -45,6 +45,23 @@ No public endpoints, account credentials or system certificate changes are used.
 The synchronous multi driver queues Zsh signals around libcurl calls and
 delivers them between calls. Tests establish these specific behaviors, not
 every resolver, signal trap, job-control combination, or backend behavior.
+
+## Descriptor-ownership coverage
+
+- Six simultaneous synchronous/concurrent HTTP/HTTPS and WS/WSS connection
+  sockets, all at descriptor numbers >=10. Ordinary `{fd}` closure and
+  duplication attempts fail; subsequent HTTP reuse and WS/WSS binary I/O work.
+- Actual socket close-on-exec flags checked through Linux `/proc`, with no
+  connection identities inherited by an executed child.
+- Private input/output duplicates rejecting closure and duplication, while
+  closing their caller-owned originals still permits an exact binary transfer.
+- Reset, WS drop, and three unload/reload cycles releasing sockets. Cached
+  HTTP sockets outlive their creating easy handles and still close correctly.
+- Caller-owned descriptors occupying 3..9 before connection creation, with
+  registration and cleanup of sockets opened above that range.
+
+These checks cover connection sockets and retained file duplicates, not every
+descriptor opened internally by libcurl backends. See [the scope](descriptors.md).
 
 ## Completion coverage
 

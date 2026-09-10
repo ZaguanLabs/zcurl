@@ -56,7 +56,9 @@ status 2 before network I/O. Pipe and socket sinks need a separate backpressure
 implementation; they are not supported by this option.
 
 The module duplicates the descriptor, marks the duplicate close-on-exec, and
-registers it with Zsh as module-owned. Closing or reusing the original descriptor
+registers it with Zsh as private/internal. Ordinary `{fd}` closure or duplication
+of the private descriptor is rejected; see [descriptor ownership](descriptors.md).
+Closing or reusing the original descriptor
 does not redirect an existing download. The module never closes the caller's
 original descriptor. It releases its duplicate when the request finishes,
 fails, times out, is cancelled/dropped, or is discarded by reset/unload.
