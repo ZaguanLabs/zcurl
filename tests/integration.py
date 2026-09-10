@@ -471,6 +471,13 @@ def interrupt_test(env, plain):
         os.write(fd, b'zcurl http info active; print -r -- "HTTP_WAIT_PRESERVED:$?:$zcurl_state"\n')
         wait_for(b"\r\nHTTP_WAIT_PRESERVED:0:pending\r\n", timeout=2)
         assert time.monotonic() - start < 1.5, 'HTTP wait cancellation was delayed'
+        os.write(fd, b'zcurl http submit any_other -- "$ZCURL_TEST_HTTP/hang"; print -r -- HTTP_ANY_BEGIN; zcurl http wait-any active any_other --timeout 600000\n')
+        wait_for(b"\r\nHTTP_ANY_BEGIN\r\n")
+        start = time.monotonic()
+        os.write(fd, b'\x03')
+        os.write(fd, b'zcurl http info any_other; print -r -- "HTTP_ANY_PRESERVED:$?:$zcurl_state"; zcurl http drop any_other\n')
+        wait_for(b"\r\nHTTP_ANY_PRESERVED:0:pending\r\n", timeout=2)
+        assert time.monotonic() - start < 1.5, 'HTTP wait-any cancellation was delayed'
         os.write(fd, b'TRAPUSR1() { zcurl http cancel active; print -r -- "HTTP_REENTRY:$?"; zmodload -u zcurl; print -r -- "HTTP_UNLOAD:$?"; unset response; typeset -g response=changed; }; print -r -- HTTP_TRAP_READY\n')
         wait_for(b"\r\nHTTP_TRAP_READY\r\n")
         os.write(fd, b'zcurl http submit finishing -- "$ZCURL_TEST_HTTP/slow"; print -r -- HTTP_POLL_BEGIN; zcurl http poll -r response --timeout 1000; print -r -- "HTTP_MUTATION:$?:$zcurl_error_kind:$response"\n')
@@ -483,11 +490,17 @@ def interrupt_test(env, plain):
         wait_for(b"\r\nHTTP_WAIT_MUTATION_BEGIN\r\n")
         os.kill(pid, signal.SIGUSR1)
         wait_for(b"\r\nHTTP_WAIT_MUTATION:2:result:changed:wait_finishing\r\n")
-        os.write(fd, b'unfunction TRAPUSR1; unset response; typeset -A response; zcurl http collect wait_finishing -r response; print -r -- "HTTP_WAIT_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http collect finishing -r response; print -r -- "HTTP_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http cancel active; zcurl http collect active -r response; print -r -- "HTTP_CANCELLED:$?:$response[state]:$response[error_kind]"; zcurl --reset\n')
+        os.write(fd, b'unset response; typeset -A response; zcurl http submit any_finishing -- "$ZCURL_TEST_HTTP/slow"; print -r -- HTTP_ANY_MUTATION_BEGIN; zcurl http wait-any active any_finishing -r response --timeout 1000; print -r -- "HTTP_ANY_MUTATION:$?:$zcurl_error_kind:$response:$zcurl_handle"\n')
+        wait_for(b"\r\nHTTP_ANY_MUTATION_BEGIN\r\n")
+        os.kill(pid, signal.SIGUSR1)
+        wait_for(b"\r\nHTTP_ANY_MUTATION:2:result:changed:any_finishing\r\n")
+        os.write(fd, b'unfunction TRAPUSR1; unset response; typeset -A response; zcurl http collect any_finishing -r response; print -r -- "HTTP_ANY_RETAINED:$?:$response[http_status]:$response[complete]"\n')
+        wait_for(b"\r\nHTTP_ANY_RETAINED:0:200:1\r\n")
+        os.write(fd, b'zcurl http collect wait_finishing -r response; print -r -- "HTTP_WAIT_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http collect finishing -r response; print -r -- "HTTP_RETAINED:$?:$response[http_status]:$response[complete]"; zcurl http cancel active; zcurl http collect active -r response; print -r -- "HTTP_CANCELLED:$?:$response[state]:$response[error_kind]"; zcurl --reset\n')
         wait_for(b"\r\nHTTP_WAIT_RETAINED:0:200:1\r\n")
         wait_for(b"\r\nHTTP_RETAINED:0:200:1\r\n")
         wait_for(b"\r\nHTTP_CANCELLED:42:cancelled:cancelled\r\n")
-        print('PASS: PTY concurrent HTTP poll/wait interrupts preserve requests; reentry/unload and result mutation guards hold')
+        print('PASS: PTY concurrent HTTP poll/wait/wait-any interrupts preserve requests; reentry/unload and result mutation guards hold')
     finally:
         os.close(fd)
         try:
@@ -595,6 +608,11 @@ if __name__ == "__main__":
         ''')
         assert plain.request_count == before, 'HTTP submission/cancellation or invalid inputs caused network I/O'
         print(run(env, (ROOT / 'tests' / 'concurrency.zsh').read_text()))
+        before = plain.request_count
+        wait_result = run(env, (ROOT / 'tests' / 'wait-any.zsh').read_text())
+        assert wait_result.startswith('PASS: wait-any'), 'wait-any script ended before completing its assertions'
+        print(wait_result)
+        assert plain.request_count == before + 6, 'invalid wait-any selection caused HTTP I/O'
         assert (temp / 'concurrent.bin').read_bytes() == bytes(range(256)) + b'\n\n', 'owned async upload changed'
         batch = subprocess.run(
             ['zsh', '-df', str(Path(env['ZCURL_TEST_ROOT']) / 'examples' / 'concurrent.zsh'),

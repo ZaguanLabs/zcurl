@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.10.0-dev"
+#define ZCURL_VERSION "0.11.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -824,6 +824,7 @@ help(void)
          "zcurl http submit HANDLE [HTTP options] URL\n"
          "zcurl http poll [-t MS] [-r ARRAY]\n"
          "zcurl http wait HANDLE [-t MS] [-r ARRAY]\n"
+         "zcurl http wait-any HANDLE [HANDLE ...] [-t MS] [-r ARRAY]\n"
          "zcurl http collect|cancel|drop|info HANDLE [-r ARRAY]\n"
          "  See docs/concurrency.md for scheduling, limits and result ownership.\n"
          "zcurl ws OP HANDLE [options] [URL]\n"

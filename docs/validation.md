@@ -1,4 +1,4 @@
-# Validation of 0.10.0-dev
+# Validation of 0.11.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -96,10 +96,12 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 77 resulting command buffers, including:
+completion widget. The test checks 88 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
+- Variadic `wait-any` handle positions, interspersed options, `--`, namespace
+  filtering and fallback when discovery is disabled or the module is unloaded.
 - Live names for every existing-handle operation, namespace separation, no
   suggestions for new names, and updates after drop and feature toggling.
 - Methods, frame types, body/HEAD exclusions, repeated headers, options after
@@ -212,7 +214,12 @@ environment above. Tests run in fresh shells and include:
   or cancelled targets remain collectable with their original outcome.
 - The 32-handle and 128 MiB reservation limits, rejection before response
   allocation, release on collection/drop, and reset/unload of outstanding jobs.
-- PTY Ctrl-C in poll and wait preserving pending jobs; trap attempts to cancel/reenter/unload
+- Selected `wait-any` calls ignoring unrelated retained results while driving
+  unselected HTTP/HTTPS barrier dependencies; submission-order selection,
+  cancelled/failed/expired requests, timeout snapshots and dynamic scope.
+- Empty, duplicate, unknown, malformed and oversized selections and bad options
+  causing no HTTP I/O; the inclusive 32-handle bound accepting all names.
+- PTY Ctrl-C in poll, wait and wait-any preserving pending jobs; trap attempts to cancel/reenter/unload
   being rejected; a trap changing a poll or wait destination without
   losing the completed response.
 

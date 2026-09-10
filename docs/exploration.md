@@ -1,6 +1,6 @@
 # Where to push next
 
-Updated for 0.10.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.11.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
@@ -35,12 +35,14 @@ request composition and results, with libcurl owning network protocols.
 | Persistent libcurl worker plus Zsh client | Independent network progress and process isolation; session reuse across commands | Framing, cancellation, backpressure, result ownership, worker lifecycle |
 | External curl invocation | Mature existing interface; excellent for known batches | Separate invocations do not retain one shared connection pool |
 
-The explicit `zcurl http submit/poll/wait/collect/cancel/drop/info` API now exercises
+The explicit `zcurl http submit/poll/wait/wait-any/collect/cancel/drop/info` API now exercises
 libcurl's multi interface with retained request ownership and bounded storage.
 Local HTTP and HTTPS barriers demonstrate overlapping requests; cancellation,
 partial results, TLS pool reuse and PTY signals have regression coverage.
 Waiting for one handle continues driving the pool and has an independent wait
-deadline. Interactive integration remains open.
+deadline. `wait-any` applies the same driver to an explicit selection, preventing
+unrelated retained completions from masking a caller's batch results. Interactive
+integration remains open.
 
 `zle -F` is a useful readiness hook while the line editor is active. The local
 Zsh manual explicitly makes the caller responsible when ZLE is inactive.

@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.10.0-dev** is intended for trying in a project: methods, request
+Version **0.11.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -189,6 +189,11 @@ collection publishes the response and releases the handle. `cancel` preserves
 a partial response for collection; `drop` discards a request. Up to 32 named
 requests can coexist, within a shared 128 MiB storage reservation limit.
 
+`zcurl http wait-any users teams -r event` waits for either selected request.
+It advances the whole pool but ignores unrelated retained completions, making
+it useful when several callers share the module. Collect the returned handle
+and remove it from your next selection. See [selected waits](docs/concurrency.md#waiting-for-a-selected-set).
+
 Use `zcurl http wait users --timeout 1000` to wait for one named request while
 the entire HTTP pool advances. A wait timeout preserves the request; a successful
 wait leaves its result ready for collection.
@@ -329,7 +334,7 @@ can change it. If publication then fails, the global result remains available
 with `error_kind=result`. Array assignment replaces all existing keys.
 
 Failed transfers can retain **partial** bodies and headers. The body limit
-applies to raw stored bytes, not total process memory: Zsh's internal encoding,
+applies to stored body bytes (decoded with `--compressed`), not total process memory: Zsh's internal encoding,
 publication copies, and a caller-owned snapshot use additional space. Received
 headers are bounded at 256 KiB, with libcurl's own limits also applying.
 

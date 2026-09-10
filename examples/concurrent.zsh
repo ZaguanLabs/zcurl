@@ -23,7 +23,7 @@ fetch_batch() {
             pending[$handle]=1
         done
         while (( ${#pending} )); do
-            zcurl http poll -r event --timeout 100 || return
+            zcurl http wait-any "${(@k)pending}" -r event || return
             [[ $event[event] == ready ]] || continue
             handle=$event[handle]
             if zcurl http collect "$handle" -r response; then

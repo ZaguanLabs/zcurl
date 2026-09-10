@@ -1,4 +1,4 @@
-# Concurrent HTTP (0.4.0-dev)
+# Concurrent HTTP (0.11.0-dev)
 
 `zcurl http` runs multiple HTTP/HTTPS requests on the owning shell thread.
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
@@ -31,6 +31,7 @@ cleanup and continues collecting when individual requests fail.
 zcurl http submit HANDLE [HTTP options] URL
 zcurl http poll [-r ARRAY] [-t MS]
 zcurl http wait HANDLE [-r ARRAY] [-t MS]
+zcurl http wait-any HANDLE [HANDLE ...] [-r ARRAY] [-t MS]
 zcurl http collect HANDLE [-r ARRAY]
 zcurl http cancel HANDLE [-r ARRAY]
 zcurl http drop HANDLE [-r ARRAY]
@@ -57,6 +58,7 @@ are not supported. Only submission headers can repeat.
 | `submit` | Accepts the HTTP request options, including methods, literal binary data, file input/output, headers, CA file, `--fail`, timeouts, and `--max-body`. Copies literal data and configuration, retains any file descriptors, then attaches the request to the pool without network I/O. Returns `event=submitted`, `state=pending`. Its result array receives only this acknowledgment and is not remembered. |
 | `poll` | Advances all pending HTTP jobs. `-t`/`--timeout` is 0..1000 ms, default 0. Returns one retained terminal handle as `event=ready`, or `event=idle` with an empty handle. It does not copy response payloads or consume a result. |
 | `wait` | Advances all pending jobs until the named request is terminal or the wait expires. `-t`/`--timeout` is 0..600000 ms, default 10000. Returns 0 with `event=ready` for the target, even if its transfer failed. A wait timeout returns 28 with `event=timeout`, `error_kind=wait-timeout`, and `code=0`, preserving the request. No response is consumed. |
+| `wait-any` | Advances all pending jobs until any selected handle is terminal. Accepts 1..32 distinct existing HTTP names and the same timeout/result options as `wait`. Returns the first selected completion in submission order without consuming it. A wait timeout returns 28 and preserves every request. |
 | `collect` | Copies a terminal response into global parameters and the optional array, returns its HTTP/transport status, then releases the handle. Returns `event=collected`, with `state=done` or `cancelled`. A pending request returns 2 and remains available. |
 | `cancel` | Stops one pending request immediately, preserving any partial body/headers for collection. Returns 0 with `event=cancelled`, `state=cancelled`. Cancelling an already terminal request returns 2 without changing its result. |
 | `drop` | Releases a pending or terminal request without collecting it; returns `event=dropped`, `state=dropped`. Unknown handles return 2. |
@@ -82,6 +84,53 @@ elif [[ $event[error_kind] == wait-timeout ]]; then
 fi
 # teams remains available for its own wait/collection.
 ```
+
+## Waiting for a selected set
+
+Use `wait-any` when a batch shares the HTTP pool with other callers. Unlike
+unfiltered `poll`, it only reports a handle from the supplied selection. Every
+pending job still gets network progress, including unselected dependencies.
+
+```zsh
+typeset -A pending=( users 1 teams 1 ) event response
+# After successfully submitting these two requests:
+while (( ${#pending} )); do
+    zcurl http wait-any "${(@k)pending}" -r event --timeout 1000 || break
+    handle=$event[handle]
+    if zcurl http collect "$handle" -r response; then
+        print -r -- "$handle: HTTP $response[http_status]"
+    else
+        print -ru2 -- "$handle: ${(V)response[error]}"
+    fi
+    unset "pending[$handle]"
+done
+# On early exit, pending still identifies requests this caller must clean up.
+```
+
+The [runnable batch example](../examples/concurrent.zsh) uses this operation
+and includes cleanup. Keep the selected names under the caller's control;
+the discovery array contains every caller's retained requests.
+
+The selection must contain 1..32 distinct existing HTTP handles. Unknown names,
+duplicates, invalid identifiers and invalid options/results fail before driving
+any request. A name belonging only to a WebSocket is not an HTTP handle.
+Options can precede, follow or appear between names; `--` ends option parsing.
+Put `-r ARRAY` first to capture subsequent parsing errors. Short clusters and
+attached option values remain unsupported.
+
+`--timeout` is 0..600000 ms, default 10000, independent of submission deadlines.
+Zero performs one drive step without waiting. A completed, cancelled or failed
+selected request returns 0 with `event=ready` and its `handle`, `state` and byte
+count. Collect it to obtain its transfer status and payload. When several are
+ready, submission order wins over selection order. Until collected or dropped,
+the same handle can be reported again; remove released names from future calls.
+
+A wait timeout returns 28 with `event=timeout`, `error_kind=wait-timeout`, and
+`code=0`. There is no selected result: `handle` and `state` are empty and `bytes`
+is zero. All requests remain available. Driver interruption/failure also leaves
+the selection unconsumed. A result array changed by a signal trap causes the
+usual publication error; a ready response remains collectable. These calls
+retain the existing 16-field concurrent result shape.
 
 ## Results and ownership
 

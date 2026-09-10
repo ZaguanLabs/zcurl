@@ -1,4 +1,4 @@
-# Native Zsh completion (0.10.0-dev)
+# Native Zsh completion (0.11.0-dev)
 
 `completions/_zcurl` provides optional compsys completion for the module's CLI.
 It describes arguments without invoking `zcurl`, opening connections, driving
@@ -36,8 +36,9 @@ your startup configuration.
 ## What completion offers
 
 - Top-level `http`, `ws`, `headers`, control flags and synchronous HTTP options.
-- Operation-specific HTTP and WebSocket options. Handle arguments come before
-  options, matching the module's grammar; `http poll` takes no handle.
+- Operation-specific HTTP and WebSocket options. Single-handle operations take
+  the handle before options; `http poll` takes no handle. `http wait-any` accepts
+  multiple handles interspersed with timeout/result options.
 - Existing handles from the native read-only discovery arrays, with separate
   HTTP and WebSocket namespaces. These include terminal records until released.
   New-name positions stay free text. Discovery is optional; completion still

@@ -27,6 +27,7 @@ if (( CURRENT > 2 )); then
           operations=(
             'submit:submit a named request' 'poll:advance pending requests'
             'wait:wait for one request' 'collect:consume a completed response'
+            'wait-any:wait for any request in a selected set'
             'cancel:cancel a pending request' 'drop:release a request'
             'info:inspect a request without network I/O'
           )
@@ -46,7 +47,7 @@ if (( CURRENT > 2 )); then
         allowed=( "${(@)operations%%:*}" )
         (( ${allowed[(Ie)$operation]} )) || return 1
         compset -n 2
-        if [[ $mode != http || $operation != poll ]]; then
+        if [[ $mode != http || ( $operation != poll && $operation != wait-any ) ]]; then
           if (( CURRENT == 2 )); then
             if [[ $mode == http && $operation != submit &&
                   ${parameters[zcurl_http_handles]-} == *array*readonly*special* ]]; then
@@ -109,8 +110,9 @@ case $mode:$operation in
   http:poll)
     specs+=( '(-t --timeout)'{-t,--timeout}'[poll timeout, default 0 ms]:milliseconds (0..1000):' )
     ;;
-  http:wait)
+  http:wait|http:wait-any)
     specs+=( '(-t --timeout)'{-t,--timeout}'[independent wait timeout, default 10000 ms]:milliseconds (0..600000):' )
+    [[ $operation == wait-any ]] && specs+=( '*:HTTP handle:->http-handles' )
     ;;
   ws:open)
     specs+=(
@@ -143,6 +145,14 @@ esac
 
 _arguments -C -0 -S "$specs[@]" && return 0
 case $state in
+  http-handles)
+    if [[ ${parameters[zcurl_http_handles]-} == *array*readonly*special* ]]; then
+      handles=( "${zcurl_http_handles[@]}" )
+      _wanted handles expl 'HTTP handle' compadd -a handles
+    else
+      _message 'HTTP handle (ASCII identifier, at most 64 characters)'
+    fi
+    ;;
   top)
     if (( CURRENT == 2 )); then
       operations=( 'http:concurrent HTTP requests' 'ws:persistent WebSockets' 'headers:look up response header values' )

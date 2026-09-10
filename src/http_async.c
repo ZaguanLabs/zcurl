@@ -174,11 +174,21 @@ memory:
     return NULL;
 }
 
-/* Return a retained completion without consuming it. A target selects wait
+static int
+http_selected(struct http_job *job, struct http_job **targets, size_t count)
+{
+    size_t i;
+    if (!count) return 1;
+    for (i = 0; i < count; ++i)
+        if (targets[i] == job) return 1;
+    return 0;
+}
+
+/* Return a retained completion without consuming it. Targets select wait
  * semantics: drive every job, but ignore unrelated completions and continue
- * until this target finishes or the caller's deadline/signal stops the wait. */
+ * until one target finishes or the caller's deadline/signal stops the wait. */
 static struct http_job *
-http_drive(long timeout, struct http_job *target)
+http_drive(long timeout, struct http_job **targets, size_t count)
 {
     int64_t deadline = monotonic_ms() + timeout;
     int steps = 0;
@@ -228,7 +238,7 @@ http_drive(long timeout, struct http_job *target)
         now = monotonic_ms();
         wait_ms = deadline - now;
         for (j = http_jobs; j; j = j->next) {
-            if (j->done && (!target || j == target) && !ready) ready = j;
+            if (j->done && !ready && http_selected(j, targets, count)) ready = j;
             if (!j->done && j->deadline - now < wait_ms)
                 wait_ms = j->deadline - now;
         }
@@ -239,7 +249,7 @@ http_drive(long timeout, struct http_job *target)
         if (wait_ms <= 0) continue;
         mc = curl_multi_poll(http_pool, NULL, 0, wait_ms > 100 ? 100 : (int)wait_ms, NULL);
         if (mc != CURLM_OK) { http_pool_fail(mc); return NULL; }
-    } while (target || ++steps < HTTP_STEPS);
+    } while (count || ++steps < HTTP_STEPS);
     return NULL;
 }
 
@@ -267,6 +277,61 @@ http_collect(struct http_job *j)
     http_snapshot(j, "collected");
 }
 
+/* Resolve the entire selection before driving any request. These pointers
+ * remain stable while the builtin's busy guard rejects mutations from traps. */
+static void
+http_wait_any(char **args)
+{
+    char *names[HTTP_JOBS], *result = NULL;
+    struct http_job *targets[HTTP_JOBS], *ready;
+    size_t count = 0, i, k;
+    long timeout = 10000;
+    unsigned seen = 0;
+    int options = 1;
+    while (*args) {
+        char *arg = text_argument(*args++), *value;
+        unsigned bit;
+        if (!arg) goto usage;
+        if (options && !strcmp(arg, "--")) { options = 0; continue; }
+        if (!options || *arg != '-') {
+            if (!identifier(arg) || strlen(arg) > 64 || count == HTTP_JOBS) goto usage;
+            names[count++] = arg;
+            continue;
+        }
+        if (!strcmp(arg, "-r") || !strcmp(arg, "--result")) bit = 1;
+        else if (!strcmp(arg, "-t") || !strcmp(arg, "--timeout")) bit = 2;
+        else goto usage;
+        if ((seen & bit) || !*args || !(value = text_argument(*args++))) goto usage;
+        seen |= bit;
+        if (bit == 1) {
+            if (!result_parameter(value)) goto usage;
+            result = value;
+        } else if (!decimal(value, 0, 600000, &timeout)) goto usage;
+    }
+    if (!count) goto usage;
+    curl_code = CURLE_OK;
+    for (i = 0; i < count; ++i) {
+        targets[i] = http_find(names[i]);
+        if (!targets[i]) { set_error("state", "unknown HTTP handle in wait-any", 2); goto done; }
+        for (k = 0; k < i; ++k)
+            if (targets[k] == targets[i]) {
+                set_error("usage", "duplicate HTTP handle in wait-any", 2);
+                goto done;
+            }
+    }
+    ready = http_drive(timeout, targets, count);
+    if (ready) http_snapshot(ready, "ready");
+    else if (!return_status) {
+        replace_text(&event_text, "timeout", 7);
+        set_error("wait-timeout", "HTTP wait timed out; requests remain available", 28);
+    }
+    goto done;
+usage:
+    set_error("usage", "use zcurl http wait-any HANDLE [HANDLE ...] [-t MS] [-r ARRAY]", 2);
+done:
+    if (result) publish_result(result, RESULT_ASYNC);
+}
+
 static void
 http_command(char **args)
 {
@@ -278,6 +343,7 @@ http_command(char **args)
     int collect = 0, waiting;
     r.timeout = 10000; r.connect_timeout = 3000; r.max_body = BODY_LIMIT;
     if (!*args || !(op = text_argument(*args++))) goto usage;
+    if (!strcmp(op, "wait-any")) { http_wait_any(args); return; }
     waiting = !strcmp(op, "wait");
     if (strcmp(op, "submit") && strcmp(op, "poll") && strcmp(op, "collect") &&
         strcmp(op, "cancel") && strcmp(op, "drop") && strcmp(op, "info") && !waiting) goto usage;
@@ -310,14 +376,14 @@ http_command(char **args)
     }
     curl_code = CURLE_OK;
     if (!strcmp(op, "poll")) {
-        j = http_drive(timeout, NULL);
+        j = http_drive(timeout, NULL, 0);
         if (j) http_snapshot(j, "ready");
         goto done;
     }
     j = http_find(name);
     if (!j) { set_error("state", "unknown HTTP handle", 2); goto done; }
     if (waiting) {
-        if (http_drive(timeout, j)) {
+        if (http_drive(timeout, &j, 1)) {
             http_snapshot(j, "ready");
         } else if (!return_status) {
             http_snapshot(j, "timeout");
