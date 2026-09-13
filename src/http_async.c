@@ -247,10 +247,11 @@ http_selected(struct http_job *job, struct http_job **targets, size_t count)
  * timer through curl_multi_poll; the others contribute extra descriptors and
  * shorten the timeout. No transfer is driven while these arrays are built. */
 static int
-http_wait_pools(struct http_session **pools, size_t count, int timeout)
+http_wait_pools(struct http_session **pools, size_t count, int timeout,
+                const struct curl_waitfd *extra, unsigned int extra_count)
 {
     struct curl_waitfd *fds = NULL;
-    unsigned int capacity = 0, used = 0, counts[HTTP_SESSIONS + 1];
+    unsigned int capacity = extra_count, used = extra_count, counts[HTTP_SESSIONS + 1];
     size_t i;
     CURLMcode mc;
     for (i = 1; i < count; ++i) {
@@ -267,6 +268,7 @@ http_wait_pools(struct http_session **pools, size_t count, int timeout)
         if (SIZE_MAX / capacity < sizeof(*fds)) goto memory;
         fds = malloc((size_t)capacity * sizeof(*fds));
         if (!fds) goto memory;
+        if (extra_count) memcpy(fds, extra, extra_count * sizeof(*fds));
         for (i = 1; i < count; ++i) {
             unsigned int actual = 0;
             if (!counts[i]) continue;
@@ -365,7 +367,7 @@ http_drive(long timeout, struct http_job **targets, size_t count)
         /* A different request's deadline may have expired during this step.
          * Process it without treating it as the selected wait's deadline. */
         if (wait_ms <= 0) continue;
-        if (!http_wait_pools(pools, pool_count, wait_ms > 100 ? 100 : (int)wait_ms)) return NULL;
+        if (!http_wait_pools(pools, pool_count, wait_ms > 100 ? 100 : (int)wait_ms, NULL, 0)) return NULL;
     } while (count || ++steps < HTTP_STEPS);
     return NULL;
 }

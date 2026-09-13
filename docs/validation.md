@@ -1,4 +1,4 @@
-# Validation of 0.26.0-dev
+# Validation of 0.27.0-dev
 
 Environment: installed Zsh 5.9.2, Mageia x86_64, libcurl 8.21.0 with OpenSSL
 3.5.8. The module builds with `-std=c99 -Wall -Wextra`; an additional syntax
@@ -14,13 +14,80 @@ make benchmark
 make benchmark-headers
 ```
 
+Each test or benchmark recipe uses GNU `timeout`: a 240-second deadline sends
+SIGTERM to the command's process group, followed by SIGKILL after five seconds
+if it has not exited. A timeout fails the make target and prints a diagnostic.
+On slower machines, set an explicit larger bound, such as
+`make memcheck TEST_TIMEOUT=480s`. Python output is unbuffered so redirected logs
+show progress immediately. These recipe deadlines cover fixture setup, tests,
+and cleanup; they do not cover the prerequisite build and syntax checks.
+
 The Python fixture creates HTTP/1.1 loopback servers and a one-day localhost
 certificate under a temporary directory, including a non-ASCII path. The
 test shell has inherited proxy variables removed and runs with `zsh -df`.
 Proxy-specific tests install their own loopback proxy environment.
 No public endpoints, account credentials or system certificate changes are used.
 
+## First customer baseline: zblade-cli
+
+On 2026-09-11, the sibling client's
+`docs/verification/zcurl-blade-smoke.py` passed against the local 0.27.0-dev
+module over both WS and verified WSS. It exercised Blade envelopes,
+authentication, fragmented UTF-8, interleaved ping/pong, large tool results,
+continuation, approval/context exchanges, cancellation, abrupt EOF and reconnect
+without replay. The probe reported 575 polls for WS and 578 for WSS, with a
+maximum observed poll duration of 0.010 seconds in each run. These loopback
+measurements do not establish end-to-end UI latency or long-session stability.
+The process exited 0 under a 120-second watchdog with a five-second kill grace.
+
+The client's `make test` passed its 63 coordinator/tool assertions, then failed
+at executable startup because the configured ZaguanLabs/zcurses native module
+was missing. The WS/WSS executable and subsequent drawing checks therefore
+remain unverified against this build. This is a client dependency prerequisite,
+not evidence of a zcurl transport failure. Restore the matching zcurses build
+before continuing the actual-client baseline. Local logs and exit statuses are
+under `build/zblade-{transport,client}-baseline.*`.
+
 ## Coverage
+
+### Shared polling and deployment
+
+The shared-poll changes passed the normal suite, Valgrind (`TEST_TIMEOUT=480s`),
+and ASan/UBSan. The sanitizer run used the installed GCC 13 compiler/runtime
+pair because the default GCC 15 ASan runtime was unavailable:
+
+```zsh
+make asan CC=/usr/lib/compat-cuda-gcc13/bin/gcc \
+    ASAN_RUNTIME=/usr/lib/compat-cuda-gcc13/lib64/libasan.so.8.0.0 TEST_TIMEOUT=480s
+```
+
+The added blocked-peer and WS/WSS fault-injection checks also passed separately
+with that instrumented module. `make test-package` passed the local extraction
+and network checks. Build checks verified reuse with unchanged settings and
+recompilation after switching to an older alternate header tree or changing
+compiler flags. These are local results, not a broader compatibility matrix.
+
+- `tests/ws-send-again.c` interposes the actual socket send beneath libcurl,
+  forcing the first nonempty WS and WSS frame calls to return AGAIN with zero payload bytes
+  sent. The test requires a zero-fragsize retry, exact 200,000-byte echo, and a
+  correctly framed subsequent message. This Linux probe runs in a separate
+  child, including sanitizer modes; it is not run under Valgrind. The existing
+  socket-backpressure tests remain Valgrind-covered.
+- Shared HTTP/WS/WSS polling crosses a two-pool HTTP response barrier while
+  transferring binary WS chunks, checks service of both sockets alongside an
+  uncollected HTTP completion, and exercises deadline expiry, validation before
+  driving, protocol failure, close, reset and snapshot ownership.
+  A stalled peer also checks that another WS handle and HTTP remain usable;
+  a concurrent HTTP release allows exact recovery of the 8 MiB WS payload.
+- Shared-poll PTYs exercise Ctrl-C with both HTTP and WS handles live, trap
+  reentry/unload rejection, changed result destinations, and post-interruption
+  recovery. The timing assertion covers this fixture, not every backend.
+- `make test-package` verifies archive/module digests, loads an extracted bundle
+  from a directory containing spaces and non-ASCII characters with only Zsh in
+  PATH, and performs verified HTTPS/WSS I/O. It validates local relocation,
+  not compatibility with a different host or Zsh ABI.
+
+### Existing transport and shell coverage
 
 - Actual builtin load/unload/reload; repeated verified HTTPS requests using
   one connection independently counted by the server.
@@ -184,8 +251,8 @@ from validation or cleanup. Existing proxy tests also retain header separation.
 reports three-sample median/minimum/maximum timings; it has no pass/fail timing
 threshold. See [method and local results](header-performance.md).
 
-An initial ASan run lost its PTY shell during the WebSocket signal test without
-a sanitizer report. The full retry and two isolated ASan signal runs passed.
+During 0.26.0-dev validation, an ASan run lost its PTY shell during the WebSocket
+signal test without a sanitizer report. The full retry and two isolated ASan signal runs passed.
 The PTY reader now includes captured terminal output when reads fail or the
 shell closes, so a recurrence retains useful diagnostics.
 
@@ -221,7 +288,7 @@ decoders and every form of damaged stream are not covered; see
 ## Completion coverage
 
 An isolated Zsh PTY initializes actual compsys and invokes the registered ZLE
-completion widget. The test checks 214 resulting command buffers, including:
+completion widget. The test checks 224 resulting command buffers, including:
 
 - HTTP, WebSocket and header-lookup subcommands; operation-specific flags;
   handle positions and the handle-free `http poll` grammar.
@@ -245,6 +312,20 @@ These are interactive completion checks on installed Zsh 5.9.2. They do not
 validate every framework or third-party completer. See [setup and behavior](completion.md).
 
 ## Header-lookup coverage
+
+Name-discovery tests verify ASCII lowercase output, duplicate ordering,
+continuation handling, final-response and trailer selection, 101 versus other
+informational responses, and literal selectors for fields named `--names` or
+`--field`. They exercise a maximum-length name at the 256 KiB input bound,
+16,384 occurrences, dynamic scope, saved results after unload and pending jobs
+that must remain unadvanced. Malformed-input and invalid-target tests run in
+both value and name modes. Origin counters allow only the two explicit setup
+requests; discovery and validation add no I/O.
+
+The first 0.27.0-dev UBSan run exhausted the host's per-user thread allowance:
+4,032 threads were already in use against a soft limit of 4,096. The retry and
+Valgrind run used a soft limit of 8,192 in the test subprocess, within the existing
+hard limit of 115,490. Normal and ASan runs passed with the original allowance.
 
 `zcurl headers` is tested with actual HTTP responses and synthetic libcurl-style
 callback transcripts. Coverage includes:
@@ -424,7 +505,7 @@ third-party libraries themselves are not instrumented by this target.
 ## Memory checks and dependency findings
 
 `make asan` builds a separate module with GCC 15.2.0 address and undefined-behavior
-instrumentation. The full suite passes, including all 214 completion cases,
+instrumentation. The full suite passes, including all 224 completion cases,
 loader/examples, proxy tunnels and signal PTYs. The matching ASan runtime is
 preloaded into test children; leak detection is disabled for this target.
 A deliberately overflowing child whose failure was ignored by its parent still

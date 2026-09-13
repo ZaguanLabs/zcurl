@@ -4,6 +4,9 @@
 Submit named requests, call `poll` or `wait` to advance them, and `collect` their results.
 No worker or thread drives requests while the shell runs other commands.
 
+[`zcurl poll`](polling.md) advances these jobs and live WebSockets together,
+returning a `channel` field to identify the source of each event.
+
 ```zsh
 typeset -A event response
 zcurl http submit users --fail -- https://api.example.com/users

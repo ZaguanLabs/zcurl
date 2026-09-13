@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#define ZCURL_VERSION "0.26.0-dev"
+#define ZCURL_VERSION "0.27.0-dev"
 #define BODY_LIMIT (8L * 1024 * 1024)
 #define MAX_BODY_LIMIT (64L * 1024 * 1024)
 #define HEADER_LIMIT (256L * 1024)
@@ -35,6 +35,7 @@ static char *body, *headers, *error_text, *error_kind, *effective_url, *content_
 static zlong http_status, curl_code, new_connections, total_us;
 static zlong return_status, complete, received_bytes;
 static char *handle_text, *event_text, *state_text, *ws_type, *ws_close_reason;
+static char *channel_text;
 static zlong ws_offset, ws_bytesleft, ws_more, ws_message_end;
 static zlong ws_queued_bytes, ws_queued_frames, ws_close_code;
 
@@ -329,6 +330,7 @@ clear_result(void)
     replace_text(&state_text, "", 0);
     replace_text(&ws_type, "", 0);
     replace_text(&ws_close_reason, "", 0);
+    replace_text(&channel_text, "", 0);
     ws_offset = ws_bytesleft = ws_more = ws_message_end = 0;
     ws_queued_bytes = ws_queued_frames = ws_close_code = 0;
 }
@@ -822,16 +824,18 @@ static const struct result_field result_fields[] = {
     {"more", 1, &ws_more}, {"message_end", 1, &ws_message_end},
     {"queued_bytes", 1, &ws_queued_bytes}, {"queued_frames", 1, &ws_queued_frames},
     {"close_code", 1, &ws_close_code}, {"close_reason", 0, &ws_close_reason},
+    {"channel", 0, &channel_text},
 };
 
-enum result_shape { RESULT_HTTP, RESULT_WS, RESULT_ASYNC };
+enum result_shape { RESULT_HTTP, RESULT_WS, RESULT_ASYNC, RESULT_POLL };
 
 static int
 publish_result(char *name, enum result_shape shape)
 {
     char **values;
     /* HTTP jobs share handle/event/state with WS, retaining both older shapes. */
-    size_t i, count = shape == RESULT_WS ? ARRAY_SIZE(result_fields) :
+    size_t i, count = shape == RESULT_POLL ? ARRAY_SIZE(result_fields) :
+                      shape == RESULT_WS ? 25 :
                       shape == RESULT_ASYNC ? 16 : 13;
     /* A trap may have changed the destination during the transfer. */
     if (!result_parameter(name)) {
@@ -897,14 +901,17 @@ help(void)
          "  Inspect defaults and retained job count; preserves transfer results.\n"
          "zcurl --version             Show module, build Zsh and libcurl versions\n"
          "zcurl --help                Show this help\n"
-         "zcurl headers FIELD --from RAW --result ARRAY [--trailers]\n"
-         "  Look up response fields in an indexed array; preserve zcurl_* results.\n"
+         "zcurl headers FIELD|--names --from RAW --result ARRAY [--trailers]\n"
+         "  Look up values or list lowercase names in wire order, preserving duplicates.\n"
+         "  Use --field FIELD for literal names; all lookups preserve zcurl_* results.\n"
          "zcurl http submit HANDLE [HTTP options] URL\n"
          "zcurl http poll [-t MS] [-r ARRAY]\n"
          "zcurl http wait HANDLE [-t MS] [-r ARRAY]\n"
          "zcurl http wait-any HANDLE [HANDLE ...] [-t MS] [-r ARRAY]\n"
          "zcurl http collect|cancel|drop|info HANDLE [-r ARRAY]\n"
          "  See docs/concurrency.md for scheduling, limits and result ownership.\n"
+         "zcurl poll [-t MS] [-r ARRAY] [--max-chunk BYTES]\n"
+         "  Drive concurrent HTTP and live WebSockets; see docs/polling.md.\n"
          "zcurl ws OP HANDLE [options] [URL]\n"
          "  OP: open, send, recv, poll, close, drop, info\n"
          "  See docs/websocket.md for options, events and connection lifecycle.\n"
@@ -915,6 +922,7 @@ help(void)
 #include "http_headers.c"
 #include "websocket.c"
 #include "http_async.c"
+#include "polling.c"
 
 static int
 bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
@@ -937,6 +945,10 @@ bin_zcurl(char *name, char **args, UNUSED(Options ops), UNUSED(int func))
         goto finished;
     }
     clear_result();
+    if (args[0] && (control = text_argument(args[0])) && !strcmp(control, "poll")) {
+        polling_command(args + 1);
+        goto done;
+    }
     r.timeout = 10000;
     r.connect_timeout = 3000;
     r.max_body = BODY_LIMIT;
@@ -1077,9 +1089,24 @@ static struct features module_features = {
 int setup_(UNUSED(Module m))
 {
     size_t i;
+    const curl_version_info_data *curl_info;
+    const char *const *protocol;
+    unsigned protocols = 0;
     char *running = getsparam("ZSH_VERSION");
     if (!running || strcmp(running, ZSH_VERSION)) {
         zwarn("zcurl: rebuild for this Zsh version (module built for %s)", ZSH_VERSION);
+        return 1;
+    }
+    curl_info = curl_version_info(CURLVERSION_NOW);
+    if (curl_info && curl_info->protocols)
+        for (protocol = curl_info->protocols; *protocol; ++protocol) {
+            if (!strcmp(*protocol, "http")) protocols |= 1;
+            if (!strcmp(*protocol, "https")) protocols |= 2;
+            if (!strcmp(*protocol, "ws")) protocols |= 4;
+            if (!strcmp(*protocol, "wss")) protocols |= 8;
+        }
+    if (!curl_info || curl_info->version_num < 0x081000 || protocols != 15) {
+        zwarn("zcurl: runtime libcurl >=8.16.0 with HTTP/HTTPS/WS/WSS is required");
         return 1;
     }
     owner = getpid();

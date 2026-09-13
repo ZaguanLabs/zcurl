@@ -22,6 +22,7 @@ import websocket_fixture
 import completion
 import compression
 import proxy
+import ws_send_again
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -201,7 +202,7 @@ def fixture(module_dir=None, ubsan=False, asan_runtime=None):
             "-keyout", str(key), "-out", str(cert), "-days", "1",
             "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
             "-addext", "basicConstraints=critical,CA:TRUE",
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         plain = Server(("127.0.0.1", 0), Handler)
         tls = Server(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -547,6 +548,27 @@ def interrupt_test(env, plain):
         wait_for(b"\r\nHTTP_RETAINED:0:200:1\r\n")
         wait_for(b"\r\nHTTP_CANCELLED:42:cancelled:cancelled\r\n")
         print('PASS: PTY concurrent HTTP poll/wait/wait-any interrupts preserve requests; reentry/unload and result mutation guards hold')
+        os.write(fd, b'zcurl --reset; typeset -A shared_result; zcurl ws open shared_active -- "${ZCURL_TEST_HTTP/http:/ws:}/ws"; zcurl http submit shared_http -- "$ZCURL_TEST_HTTP/hang"; print -r -- SHARED_READY\n')
+        wait_for(b'\r\nSHARED_READY\r\n')
+        os.write(fd, b'TRAPUSR1() { zcurl poll; print -r -- "SHARED_REENTRY:$?"; zmodload -u zcurl; print -r -- "SHARED_UNLOAD:$?"; unset shared_result; typeset -g shared_result=changed; }; print -r -- SHARED_TRAP_READY\n')
+        wait_for(b'\r\nSHARED_TRAP_READY\r\n')
+        os.write(fd, b'print -r -- SHARED_BEGIN; zcurl poll -r shared_result --timeout 1000; print -r -- "SHARED_MUTATION:$?:$zcurl_error_kind:$shared_result"\n')
+        wait_for(b'\r\nSHARED_BEGIN\r\n')
+        os.kill(pid, signal.SIGUSR1)
+        wait_for(b'\r\nSHARED_REENTRY:2\r\n')
+        wait_for(b'\r\nSHARED_UNLOAD:1\r\n')
+        wait_for(b'\r\nSHARED_MUTATION:2:result:changed\r\n')
+        os.write(fd, b'unfunction TRAPUSR1; print -r -- SHARED_INTERRUPT; zcurl poll --timeout 1000\n')
+        wait_for(b'\r\nSHARED_INTERRUPT\r\n')
+        start = time.monotonic()
+        os.write(fd, b'\x03')
+        os.write(fd, b'print -r -- SHARED_RECOVERED\n')
+        wait_for(b'\r\nSHARED_RECOVERED\r\n')
+        assert time.monotonic() - start < 1.5, 'shared poll cancellation was delayed'
+        os.write(fd, b'zcurl http info shared_http; print -r -- "SHARED_HTTP:$zcurl_state"; zcurl ws send shared_active --data recovered; repeat 30; do zcurl poll --timeout 100; [[ $zcurl_event == data ]] && break; done; print -r -- "SHARED_WS:$zcurl_channel:$zcurl_body"; zcurl --reset\n')
+        wait_for(b'\r\nSHARED_HTTP:pending\r\n')
+        wait_for(b'\r\nSHARED_WS:ws:recovered\r\n')
+        print('PASS: PTY shared poll interruption, reentry/unload guards, result mutation and mixed-handle recovery')
     finally:
         os.close(fd)
         try:
@@ -639,6 +661,7 @@ if __name__ == "__main__":
         if args.valgrind:
             env["ZCURL_TEST_VALGRIND"] = "1"
         integration(env, plain, tls, temp)
+        ws_send_again.test(env, plain, tls)
         api_test(env, plain, temp)
         loader_test(env)
         completion.test(env, plain, temp)
@@ -719,6 +742,11 @@ if __name__ == "__main__":
         before = plain.request_count
         print(run(env, (ROOT / 'tests' / 'headers.zsh').read_text()))
         assert plain.request_count == before + 5, 'header lookups caused unexpected HTTP I/O'
+        names_before = plain.request_count
+        header_names = run(env, (ROOT / 'tests' / 'header-names.zsh').read_text())
+        assert header_names.startswith('PASS: response field discovery'), header_names
+        assert plain.request_count == names_before + 2, 'header name discovery caused unexpected I/O'
+        print(header_names)
         before = plain.request_count
         run(env, LOAD + '''
             setopt errexit
@@ -757,6 +785,7 @@ if __name__ == "__main__":
         assert protocol_result.startswith('PASS: required WebSocket subprotocol'), protocol_result
         assert plain.request_count + tls.request_count == before + 29, 'unexpected subprotocol request count'
         print(protocol_result)
+        print(run(env, (ROOT / 'tests/polling.zsh').read_text()))
         assert not plain.ws_errors and not tls.ws_errors, (plain.ws_errors, tls.ws_errors)
         assert any(op == 10 and data == b'heartbeat\0' for _, op, _, data in plain.ws_frames), 'automatic pong missing'
         assert any(op == 10 and data == b'unsolicited' for _, op, _, data in tls.ws_frames), 'explicit pong missing'

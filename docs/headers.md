@@ -1,11 +1,13 @@
-# Response header lookup (0.7.0-dev)
+# Response header lookup (0.27.0-dev)
 
 ```zsh
 zcurl headers FIELD --from RAW --result ARRAY [--trailers]
+zcurl headers --names --from RAW --result ARRAY [--trailers]
+zcurl headers --field FIELD --from RAW --result ARRAY [--trailers]
 ```
 
 This command reads a saved HTTP header transcript and replaces a caller-owned
-indexed array with the matching field values. It performs no network I/O and
+indexed array with matching field values or discovered field names. It performs no network I/O and
 preserves all `zcurl_*` parameters, including any transfer error, HTTP handle,
 and event. The raw transcript and response snapshot remain unchanged.
 
@@ -20,8 +22,41 @@ zcurl headers Digest --from "$response[headers]" --trailers --result trailers
 An explicit `--from` makes the same lookup work with synchronous responses,
 collected concurrent responses, and snapshots retained after reset or module
 reload. The module must be loaded to run the command; published arrays survive
-unload. The field name comes first; options may follow in any order, once each.
+unload. The field name or selector comes first; options may follow in any order, once each.
 `-r` is an alias for `--result`.
+
+## Discovering field names
+
+```zsh
+typeset -a names values
+zcurl headers --names --from "$response[headers]" --result names
+for name in "${(@u)names}"; do
+    zcurl headers --field "$name" --from "$response[headers]" --result values
+    # Consume each field's values here. Both arrays are ordinary owned data.
+done
+```
+
+`--names` returns one ASCII-lowercase field name per occurrence, in wire order.
+Duplicates are preserved: two `Set-Cookie` occurrences produce two `set-cookie`
+elements. `${(@u)names}` in the example removes duplicate names only for the loop;
+the published array retains every occurrence. Empty values still contribute a
+name, and folded continuation lines do not contribute additional names.
+
+Listing uses the same final-response selection as value lookup. Add `--trailers`
+to discover trailer names instead. An empty transcript, an informational-only
+response or a section with no fields returns an empty array. Complete lines from
+partial responses are accepted. All input is validated, including field values
+and unselected blocks, even though listing returns only names.
+
+`--field FIELD` explicitly selects a literal field name. This is useful for loops
+using discovered names: legal names such as `--names` and `--field` would otherwise
+be interpreted as selectors in the first argument. Ordinary field lookup remains
+available without `--field`. A selector is accepted only in the first position;
+`--names` cannot be combined with a field selection later in the command.
+
+Discovery makes no network requests, advances no pending jobs and preserves
+transfer results. Its input bound, array validation, atomic publication and
+ownership rules are the same as value lookup; no transfer snapshot fields change.
 
 ## Values and response selection
 

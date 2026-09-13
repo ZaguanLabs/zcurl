@@ -37,14 +37,14 @@ header_status(const char *line, size_t length)
     return i == length || line[i] == ' ' ? code : 0;
 }
 
-/* Compact selected values into storage no larger than the input. Folded lines
- * append in place, so even adversarial folding takes linear time and space. */
+/* A NULL field lists canonical names. Otherwise compact selected values into
+ * bounded storage; folded lines append in place in linear time and space. */
 static int
 parse_headers(char *raw, size_t length, const char *field, int trailers,
               char *storage, char **values, size_t *count)
 {
     char *line = raw, *end = raw + length;
-    size_t used = 0, field_length = strlen(field);
+    size_t used = 0, field_length = field ? strlen(field) : 0;
     int phase = 0, eligible = 0, previous = 0, matching = 0;
     *count = 0;
     while (line < end) {
@@ -77,10 +77,21 @@ parse_headers(char *raw, size_t length, const char *field, int trailers,
                 p = memchr(line, ':', n);
                 if (!p || !token(line, (size_t)(p - line))) return 0;
                 matching = eligible && (phase == (trailers ? 2 : 1)) &&
-                    header_name_equal(line, (size_t)(p - line), field, field_length);
+                    (!field || header_name_equal(line, (size_t)(p - line), field, field_length));
                 previous = 1;
                 value = p + 1;
-                if (matching) values[(*count)++] = storage + used;
+                if (matching) {
+                    values[(*count)++] = storage + used;
+                    if (!field) {
+                        char *name;
+                        for (name = line; name < p; ++name) {
+                            unsigned char c = (unsigned char)*name;
+                            storage[used++] = c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+                        }
+                        storage[used++] = '\0';
+                        matching = 0; /* Continuations belong to this value, not its name. */
+                    }
+                }
             }
             while (value < stop && (*value == ' ' || *value == '\t')) value++;
             while (stop > value && (stop[-1] == ' ' || stop[-1] == '\t')) stop--;
@@ -107,9 +118,13 @@ headers_command(char **args)
     char *field, *raw = NULL, *target = NULL, *storage = NULL, **values = NULL, **published;
     size_t length = 0, count = 0, i;
     unsigned seen = 0;
-    const char *message = "use zcurl headers FIELD --from RAW --result ARRAY [--trailers]";
+    const char *message = "use zcurl headers FIELD|--names|--field FIELD --from RAW --result ARRAY [--trailers]";
     int result = 2;
-    if (!*args || !(field = text_argument(*args++)) || !token(field, strlen(field))) goto done;
+    if (!*args || !(field = text_argument(*args++))) goto done;
+    if (!strcmp(field, "--field")) {
+        if (!*args || !(field = text_argument(*args++)) || !token(field, strlen(field))) goto done;
+    } else if (!strcmp(field, "--names")) field = NULL;
+    else if (!token(field, strlen(field))) goto done;
     while (*args) {
         char *option = text_argument(*args++);
         unsigned bit;

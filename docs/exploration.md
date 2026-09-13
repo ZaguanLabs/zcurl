@@ -1,12 +1,17 @@
 # Where to push next
 
-Updated for 0.26.0-dev. Persistent WS/WSS handles have queued sends and
+Updated for 0.27.0-dev. Persistent WS/WSS handles have queued sends and
 explicit incremental receive/poll operations; see [the contract](websocket.md).
 The synchronous HTTP implementation uses libcurl's multi interface to process
 Zsh's queued signals between network steps. Named concurrent HTTP requests now
 share a separate multi pool, with submission, polling, collection and cancellation;
 see [the concurrency contract](concurrency.md). Autonomous background work is
 not implemented.
+
+[`zcurl poll`](polling.md) now drives concurrent HTTP and live WebSockets in
+one bounded call. [`make package`](deployment.md) produces a relocatable native
+bundle for compatible hosts. Autonomous progress and broader platform/ABI
+validation remain separate work.
 
 Read-only native arrays now expose retained HTTP and WebSocket names for
 script discovery and existing-handle completion without driving requests or
@@ -25,6 +30,49 @@ list does not provide a general libcurl HTTP/TLS client. Building HTTP framing,
 certificate verification, proxies and TLS directly in shell code would spend
 effort on problems libcurl already handles. The useful boundary is shell-native
 request composition and results, with libcurl owning network protocols.
+
+## First customer milestone: zblade-cli
+
+The first development priority is efficient, stable operation of `zblade-cli`,
+the Zsh agentic coding harness, against its remote daemon over verified WSS.
+Broader libcurl feature coverage should follow demonstrated needs in this
+workflow. Existing HTTP discovery and WS transport behavior are the starting
+point; compatibility with the working client matters when extending the API.
+
+The sibling `../zblade-cli` checkout already contains a transport adapter,
+real-client WS/WSS and terminal fixtures, and a transport-only probe at
+`docs/verification/zcurl-blade-smoke.py`. Start with these existing workflows
+against the current module. The client's historical live-conversation results
+are useful evidence, but do not establish compatibility with each new build.
+
+Acceptance work for this milestone:
+
+1. Verify discovery, connection, authentication, streamed replies, tool-result
+   submission and automatic continuation through the actual client.
+2. Keep input, cancellation and WebSocket control traffic responsive during
+   sustained output and local tool work. Measure service-loop time, idle CPU,
+   throughput and memory before choosing optimizations or a different execution
+   model. The current client bounds events/bytes per tick; JSON decoding and
+   local work still share the owning shell thread.
+3. Exercise fragmented UTF-8 messages, interleaved control frames, large tool
+   results and slow peers. Queue pressure must remain bounded and observable.
+4. Exercise idle connections, abrupt loss, interrupted turns, reconnects and
+   peers that do not finish closing. Require finite operation deadlines and
+   explicit outcomes for pending work. Queue acceptance does not prove delivery;
+   reconnect/replay and tool-execution policy belong to the harness.
+5. Run bounded sustained-traffic and repeated-connect tests, checking resource
+   growth and cleanup as well as correctness. Record the workload, duration,
+   platform and measured responsiveness limits with each result.
+
+`zcurl` owns transport, byte integrity, bounded queues, connection lifecycle,
+and useful diagnostics. `zblade-cli` owns the daemon protocol, conversations,
+tool correlation, approvals, retries and recovery policy. Add convenience APIs
+when the client demonstrates repetitive transport work that can be removed
+without obscuring these responsibilities.
+
+The immediate next step is a current-build compatibility baseline, followed by
+the smallest fix or usability improvement exposed by that baseline. A passing
+transport probe alone is not completion of this customer milestone.
 
 ## Candidate architectures
 
@@ -64,6 +112,8 @@ requests turn out to be the main need.
    Raw response headers preserve duplicates, informational blocks and trailers.
    [Header lookup](headers.md) now extracts individual values from saved
    snapshots, with duplicate preservation and separate trailer selection.
+   Name discovery now lists the fields present in the selected response or trailers
+   before callers perform field-specific lookups.
    Field-specific interpretation remains the consuming application's task.
    Request-header construction now uses linear list building; a repeatable
    [parser benchmark](header-performance.md) measures scaling to the header limit.
@@ -107,9 +157,10 @@ requests turn out to be the main need.
    builds, distributions, other sanitizers and dependency combinations still
    need validation before promising a portable native module.
 
-The next concurrency milestone is integration feedback on deadlines, collection
-and admission limits. Whether to follow that with ZLE integration or a persistent
-worker depends on the consuming project's actual request pattern.
+The zblade-cli milestone above now leads the roadmap. Its measurements should
+determine whether explicit polling needs additional helpers or a different
+scheduling mechanism. HTTP concurrency feedback on deadlines, collection and
+admission limits remains useful as those facilities enter real client workflows.
 
 ## Sources used
 

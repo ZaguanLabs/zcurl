@@ -110,6 +110,7 @@ for malformed in $'X: orphan\r\n' $'HTTP/1.1 200 OK\r\nX: unterminated' \
     $'HTTP/2 200x\r\n\r\n' $'HTTP/1.1 200 OK\r\n\r\n\r\nX: late\r\n' \
     "${(pl:262145::x:)empty}"; do
     expect_invalid zcurl headers X --from "$malformed" -r values
+    expect_invalid zcurl headers --names --from "$malformed" -r values
     check "${(j:,:)values}" sentinel
 done
 local scalar=sentinel
@@ -119,6 +120,7 @@ local -au upper_values=(sentinel)
 for target in 'values[1+1]' 'values[$(touch should-not-exist)]' 'missing' 'scalar' \
     'response' 'readonly_values' 'unique_values' 'upper_values' 'path'; do
     expect_invalid zcurl headers X-Value --from "$raw" -r "$target"
+    expect_invalid zcurl headers --names --from "$raw" -r "$target"
 done
 expect_invalid zcurl headers X --from "$raw" --from "$raw" -r values
 expect_invalid zcurl headers X --from "$raw" -r values --trailers --trailers

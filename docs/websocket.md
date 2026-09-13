@@ -7,6 +7,10 @@ Build with libcurl >=8.16.0 and a libcurl runtime with `ws`/`wss` enabled.
 The implementation is tested with 8.21.0; older supported versions and other
 platforms still need validation.
 
+For several sockets or mixed HTTP/WS work, [`zcurl poll`](polling.md) provides
+one shared driver with round-robin WS event delivery. The per-handle commands
+below remain available.
+
 ## Contract
 
 ```text

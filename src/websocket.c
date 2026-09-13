@@ -204,6 +204,9 @@ ws_flush(struct websocket *w)
     rc = curl_ws_send(w->easy, f->data + f->sent, amount, &sent,
                       f->started ? 0 : (curl_off_t)f->len,
                       f->flags | (f->len ? CURLWS_OFFSET : 0));
+    /* AGAIN with sent == 0 can still leave an encoded header in libcurl.
+     * Keep OFFSET's total size exclusive to the first call, and prevent
+     * control replies from overtaking that frame. See ws-send-again tests. */
     f->started = 1;
     if (sent > amount) {
         ws_fail(w, CURLE_SEND_ERROR, "transport", "libcurl reported an invalid send length");

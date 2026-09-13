@@ -6,7 +6,7 @@ through libcurl.
 without spawning a curl process for every call. TLS certificate and hostname
 verification remain enabled.
 
-Version **0.26.0-dev** is intended for trying in a project: methods, request
+Version **0.27.0-dev** is intended for trying in a project: methods, request
 bodies, repeated headers, caller-owned results, bounded responses, and
 interruptible requests are implemented. The API is still experimental.
 HTTP supports synchronous requests and named concurrent requests driven by
@@ -18,7 +18,7 @@ incremental receive through bounded polling. There is no autonomous background w
 Tested with Zsh 5.9.2 on Mageia x86_64, libcurl 8.21.0, and OpenSSL 3.5.8.
 Requirements: C compiler, make, pkg-config, libcurl development files >=8.16.0
 (with WS/WSS enabled), and matching configured Zsh headers. Tests additionally use Python 3, openssl,
-curl, and optional Valgrind.
+curl, GNU coreutils `timeout`, and optional Valgrind.
 
 ```zsh
 # From this checkout:
@@ -55,6 +55,11 @@ source /absolute/path/to/zcurl/zcurl.zsh
 ```
 
 The build replaces the `.so` atomically instead of overwriting a mapped file.
+
+`make package` produces a relocatable native bundle with build metadata and a
+runtime check; `make test-package` tests its extracted loader and HTTPS/WSS I/O.
+Compatible target hosts need Zsh and runtime libraries, but no compiler or make.
+See [deployment and compatibility limits](docs/deployment.md).
 
 ## Make API requests
 
@@ -168,6 +173,11 @@ for cookie in "${cookies[@]}"; do
 done
 ```
 
+Use `zcurl headers --names --from "$response[headers]" -r names` to discover
+lowercase field names in wire order, including duplicates. Declare `names` as
+an indexed array first. `--field FIELD` looks up a literal name, including names
+that resemble selectors, so it works in loops over discovered fields.
+
 Lookup is case-insensitive and selects the last response block, excluding
 informational responses. Use `--trailers` to query its trailers instead.
 The command works on saved snapshots and preserves all `zcurl_*` transfer
@@ -204,6 +214,11 @@ wait leaves its result ready for collection.
 See the [concurrency contract](docs/concurrency.md) for deadlines, result fields,
 error handling and lifecycle, or run [examples/concurrent.zsh](examples/concurrent.zsh)
 with several URLs. The existing `zcurl [options] URL` API remains synchronous.
+
+For mixed HTTP and WebSocket applications, use `zcurl poll -r event --timeout 100`.
+It drives concurrent HTTP and live WebSockets and returns one event with
+`channel=http`, `channel=ws`, or an empty channel for idle. HTTP completions
+remain available for `http collect`. See [shared polling](docs/polling.md).
 
 ## Persistent WebSockets
 

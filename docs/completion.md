@@ -1,9 +1,12 @@
-# Native Zsh completion (0.25.0-dev)
+# Native Zsh completion (0.27.0-dev)
 
 `completions/_zcurl` provides optional compsys completion for the module's CLI.
 It describes arguments without invoking `zcurl`, opening connections, driving
 pending requests, or changing any `zcurl_*` result. The shared library need not
 be built or loaded to use completion.
+
+The shared `zcurl poll` command completes result arrays, timeout and chunk
+limits without requiring a handle or suggesting HTTP request options.
 
 ## Setup
 
@@ -53,6 +56,8 @@ your startup configuration.
   HTTP and WebSocket namespaces. These include terminal records until released.
   New-name positions stay free text. Discovery is optional; completion still
   works when the module or either array feature is absent.
+- Response-header names and `--names` / `--field` selectors, followed by the
+  shared raw-input, trailer-selection and indexed-result options.
 - Standard HTTP methods and WebSocket frame types. With `--head`, method
   suggestions are limited to HEAD; a request body excludes HEAD suggestions.
 - `--subprotocol` only on `ws open`, with duplicate suppression and a literal

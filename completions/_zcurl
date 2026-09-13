@@ -12,14 +12,29 @@ local -a session_used session_unset
 if (( CURRENT > 2 )); then
   case $words[2] in
     --help|--version|--reset) return 1 ;;
+    poll)
+      mode=shared
+      operation=poll
+      compset -n 2
+      curcontext="${curcontext%:*}:shared-poll"
+      ;;
     http|ws|headers|session)
       mode=$words[2]
       compset -n 2
       if [[ $mode == headers ]]; then
+        local -a response_fields=( Content-Type Content-Length Set-Cookie
+          ETag Last-Modified Location Retry-After Link WWW-Authenticate Digest )
         if (( CURRENT == 2 )); then
-          _values 'response field name' Content-Type Content-Length Set-Cookie \
-            ETag Last-Modified Location Retry-After Link WWW-Authenticate Digest
+          _values 'response field name or listing mode' "${response_fields[@]}" \
+            '--names[list response field names]' '--field[look up a literal field name]'
           return
+        fi
+        if [[ $words[2] == --field ]]; then
+          compset -n 2
+          if (( CURRENT == 2 )); then
+            _values 'literal response field name' "${response_fields[@]}"
+            return
+          fi
         fi
         compset -n 2
         operation=lookup
@@ -211,7 +226,7 @@ case $mode:$operation in
       '--more[send a nonfinal data fragment]'
     )
     ;;
-  ws:poll|ws:recv)
+  ws:poll|ws:recv|shared:poll)
     specs+=( '--max-chunk[receive chunk limit, default 65536 bytes]:bytes (1..65536):' )
     if [[ $operation == poll ]]; then
       specs+=( '(-t --timeout)'{-t,--timeout}'[poll timeout, default 0 ms]:milliseconds (0..1000):' )
@@ -247,7 +262,7 @@ case $state in
   top)
     if (( CURRENT == 2 )); then
       operations=( 'http:concurrent HTTP requests' 'ws:persistent WebSockets' 'headers:look up response header values'
-        'session:manage independent HTTP pools' )
+        'session:manage independent HTTP pools' 'poll:drive HTTP and all live WebSockets' )
       _describe -t commands 'command' operations
     fi
     _wanted urls expl 'HTTP or HTTPS URL' compadd -S '' -- http:// https://
